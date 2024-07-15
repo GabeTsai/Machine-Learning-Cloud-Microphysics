@@ -21,8 +21,3 @@ class SimpleCNN(nn.Module):
         x = self.fc2(x)
         return x
 
-batch_size = 1
-input_tensor = torch.randn(batch_size, 4, 24)  # Shape: (batch_size, 4, 24)
-model = SimpleCNN(24)
-output_tensor = model(input_tensor)
-print("Output Tensor Shape:", output_tensor.shape)  # Should be (batch_size, 24)
