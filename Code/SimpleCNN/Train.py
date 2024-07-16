@@ -83,7 +83,7 @@ def metrics(results):
     
 def main():
     k_folds = 5
-    epochs = 200
+    epochs = 500
     input_data, target_data = create_dataset('../../Data')
     model = SimpleCNN(input_data.shape[2])
     criterion = nn.MSELoss()
@@ -94,6 +94,7 @@ def main():
     model_folder_path = '../../SavedModels/SimpleCNN'
     
     results = {}
+    saved_test_indices = {}
     for kfold, (train_i, test_i) in enumerate(kfold.split(dataset)):
         print(f'Fold {kfold}--------------------------------')
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_i)
@@ -114,10 +115,14 @@ def main():
         print(f'Averaged loss for fold {kfold}: {avg_test_loss}')
 
         results[f'SimpleCNN_{kfold}.pth'] = avg_test_loss
+        print(test_i)
+        saved_test_indices[f'Fold {kfold}'] = test_i.tolist()  # Save the test indices
 
     metrics(results)
     with open(Path(model_folder_path) / 'results.json', 'w') as f:
         json.dump(results, f)
-    
+    with open(Path(model_folder_path) / 'test_indices.json', 'w') as f:
+        json.dump(saved_test_indices, f)  # Save the test indices dictionary    
+
 if __name__ == '__main__':
     main()

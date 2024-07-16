@@ -20,6 +20,12 @@ def min_max_normalize(data):
     '''
     return (data - np.min(data)) / (np.max(data) - np.min(data))
 
+def min_max_denormalize(data, min_val, max_val):
+    '''
+    Denormalize data from range [0, 1] to [min_val, max_val]
+    '''
+    return data * (max_val - min_val) + min_val
+
 def find_nonzero_threshold(dataset, num_values):
     '''
     Return list of indices of height levels with more than num_values non-zero values
@@ -48,7 +54,9 @@ def prepare_dataset(dataset, log, index_list):
     '''
     dataset_copy = dataset.values
     if log:
-        dataset_copy = np.log(dataset_copy, where = dataset_copy > 0)
+        dataset_copy = np.log(dataset_copy, out = np.zeros_like(dataset_copy, dtype=np.float64), where = (dataset_copy > 0))
+        dataset_copy = np.nan_to_num(dataset_copy, nan = 0)
+
     data = extract_data(dataset_copy, index_list)
     data = min_max_normalize(data)
     return data.tolist()

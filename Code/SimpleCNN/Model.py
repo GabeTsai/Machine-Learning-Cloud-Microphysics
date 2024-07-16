@@ -19,5 +19,6 @@ class SimpleCNN(nn.Module):
         x = x.view(x.size(0), -1)
         x = torch.relu(self.fc1(x))
         x = self.fc2(x)
+        x = torch.relu(x)
         return x
 
