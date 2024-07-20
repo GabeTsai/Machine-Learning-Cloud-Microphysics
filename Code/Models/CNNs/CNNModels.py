@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import numpy as np
-import json
 
 class SimpleCNN(nn.Module):
     def __init__(self, height_dim, output_bias):

@@ -2,8 +2,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 import matplotlib.pyplot as plt
-from Model import SimpleCNN, LargerCNN
-from DataUtils import create_dataset, min_max_denormalize
+from Code.CNNs.CNNModels import SimpleCNN, LargerCNN
+from Code.CNNs.CNNDataUtils import create_dataset, min_max_denormalize
 import xarray as xr
 import seaborn as sns
 from pathlib import Path
@@ -28,8 +28,8 @@ def predict(model, fold, inputs, targets, test_indices):
     print(f'Loss for fold {fold}: {loss.item()}')
     true_values_np = true_values.detach().numpy()
     predictions_np = predictions.detach().numpy()
-    r2 = r2_score(true_values_np, predictions_np, multioutput='uniform_average')
-    print(f'Averaged R2 score for fold {fold}: {r2}')
+    # r2 = r2_score(true_values_np, predictions_np, multioutput='uniform_average')
+    # print(f'Averaged R2 score for fold {fold}: {r2}')
     return predictions_np, true_values_np
 
 def prepare_pred(predictions, true_values, true_data):
@@ -58,8 +58,8 @@ def plot_pred_single_sample_time(true_values, predicted_values, i, time, height_
         height_list.append(height)
     
     # fig, ax = plt.subplots(figsize=(10, 10))  # Create a Figure and an Axes
-    ax.scatter(height_list, true_value_slice, label='True values', color='red', s = 10)
-    ax.scatter(height_list, predicted_value_slice, label='Predicted values', color='blue', s = 10)
+    ax.scatter(true_value_slice, height_list, label='True values', color='red', s = 10)
+    ax.scatter(predicted_value_slice, height_list, label='Predicted values', color='blue', s = 10)
 
     ax.set_title('Time ' + str(time) + 's', fontsize = 'small')
     ax.set_xlabel('Height level (m)', fontsize = 'small')
@@ -128,8 +128,8 @@ def heat_map(true_values, predicted_values):
     plt.show()
 
 def main():
-    fold = 4
-    model_name = 'SimpleCNN'
+    fold = 9
+    model_name = 'LargerCNN'
     model_folder_path = f'../../SavedModels/{model_name}'
     data_folder = '../../Data'
     data_file = 'ena25jan2023.nc'
@@ -145,7 +145,8 @@ def main():
         data_map = json.load(f) # Load the data map
 
     time_list = data_map['time'] #Load the time list to convert indices to time
-    model = SimpleCNN(NUM_HEIGHT_LEVELS, torch.zeros(30, ))
+
+    model = LargerCNN(NUM_HEIGHT_LEVELS, torch.zeros(30, ))
     model.load_state_dict(torch.load(Path(model_folder_path) / f'{model_name}_{fold}.pth'))
     inputs, targets = create_dataset(data_folder)   
 
@@ -159,7 +160,7 @@ def main():
     time_indices = test_indices[f'Fold {fold}']
     # plot_pred_single_sample_time(true_values, predictions, 0, time_list[time_indices[0]], ax)
     # plot_pred_single_sample_height(true_values, predictions, 6, time_list, time_indices, height_map, ax)
-    # plot_multiple_samples(true_values, predictions, model, time_list, height_map, time_indices)
+    plot_multiple_samples(true_values, predictions, model, time_list, height_map, time_indices)
     
     
 if __name__ == "__main__":
