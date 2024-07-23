@@ -2,6 +2,7 @@ import xarray as xr
 import numpy as np
 from pathlib import Path
 import os
+import json
 
 #Open file, initialize data arrays
 var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud', 'qr_autoconv_cloud', 'nr_autoconv_cloud', 'auto_cldmsink_b_cloud']
@@ -74,10 +75,28 @@ def prepare_datasets(data_folder_path):
     '''
     data_maps = []
     data_list = os.listdir(data_folder_path)
-
+    print(len(data_list))
     for data_file in data_list:
         data_file_path = Path(data_folder_path) / str(data_file)
         data_map, index_list, cloud_ds = create_data_map(data_file_path)
         data_maps.append(data_map)
     
     return data_maps
+
+def save_data_info(inputs, targets, model_folder_path, model_name):
+    input_data_map = {}
+    input_data_map['qc'] = {'min': np.min(inputs[:, 0]), 'max': np.max(inputs[:, 0])}
+    input_data_map['nc'] = {'min': np.min(inputs[:, 1]), 'max': np.max(inputs[:, 1])}
+    input_data_map['qr'] = {'min': np.min(inputs[:, 2]), 'max': np.max(inputs[:, 2])}
+    input_data_map['nr'] = {'min': np.min(inputs[:, 3]), 'max': np.max(inputs[:, 3])}
+
+    target_data_map = {}
+    target_data_map['mean'] = np.mean(targets)
+    target_data_map['min'] = np.min(targets)
+    target_data_map['max'] = np.max(targets)
+
+    with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'w') as f:
+        json.dump(target_data_map, f)
+
+    with open(Path(model_folder_path) / f'{model_name}_input_data_map.json', 'w') as f:
+        json.dump(input_data_map, f)

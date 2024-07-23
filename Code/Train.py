@@ -8,6 +8,8 @@ from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.MLP.MLPModel import MLP
 from Models.CNNs.CNNDataUtils import create_CNN_dataset
 from Models.MLP.MLPDataUtils import create_MLP_dataset
+from Models.LSTM.LSTMDataUtils import create_LSTM_dataset
+from Models.LSTM.LSTMModel import LSTM
 from Visualizations import plot_losses
 from sklearn.model_selection import KFold
 import json
@@ -222,9 +224,10 @@ def train_single(model, criterion, optimizer, dataset, batch_size, early_stop, d
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
-    model_name = 'MLP2'
+    model_name = 'LSTM'
     model_folder_path = f'../SavedModels/{model_name}'
-    input_data, target_data = create_MLP_dataset(data_folder_path, model_folder_path)
+    seq_length = 8
+    input_data, target_data = create_LSTM_dataset(data_folder_path, model_folder_path, seq_length)
     print(input_data.shape)
     print(target_data.shape)
     
@@ -233,7 +236,8 @@ def main():
     # model = LargerCNN(input_data.shape[2], torch.full(input_data.shape[2], torch.mean(target_data)))
     if checkpoint_path is None:
         model = MLP(input_data.shape[1], torch.mean(target_data))
-        learning_rate = 3e-5
+        model = LSTM(input_data.shape[2], 32, 1, 2, torch.mean(target_data))
+        learning_rate = 2e-4
         weight_decay = 1e-5
         criterion = nn.MSELoss()
         optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate, weight_decay = weight_decay)
@@ -247,7 +251,7 @@ def main():
     dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
     epochs = 2000
-    batch_size = 64
+    batch_size = 32
     k_folds = 10
     early_stop = 500
 

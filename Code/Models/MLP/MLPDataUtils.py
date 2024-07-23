@@ -50,33 +50,12 @@ def concat_data(data_maps, model_folder_path):
     target_data = np.concatenate(target_list, axis=0)
 
     #Remove outliers
+    print(target_data.shape)
     target_data_mask = target_data != np.max(target_data)
     target_data = target_data[target_data_mask]
     input_data = input_data[target_data_mask]
 
-    MLP_input_data_map = {}
-    MLP_input_data_map['qc'] = {'min': np.min(input_data[:, 0]), 'max': np.max(input_data[:, 0])}
-    MLP_input_data_map['nc'] = {'min': np.min(input_data[:, 1]), 'max': np.max(input_data[:, 1])}
-    MLP_input_data_map['qr'] = {'min': np.min(input_data[:, 2]), 'max': np.max(input_data[:, 2])}
-    MLP_input_data_map['nr'] = {'min': np.min(input_data[:, 3]), 'max': np.max(input_data[:, 3])}
-
-    MLP_target_data_map = {}
-    MLP_target_data_map['mean'] = np.mean(target_data)
-    MLP_target_data_map['min'] = np.min(target_data)
-    MLP_target_data_map['max'] = np.max(target_data)
-    
-    print(f'Original logged mean: {MLP_target_data_map["mean"]}')
-    print(f'Original logged min: {MLP_target_data_map["min"]}')
-    print(f'Original logged max: {MLP_target_data_map["max"]}')
-    print(f'Original mean: {np.exp(MLP_target_data_map["mean"])}')
-    print(f'Original min: {np.exp(MLP_target_data_map["min"])}')
-    print(f'Original max: {np.exp(MLP_target_data_map["max"])}')
-
-    with open(Path(model_folder_path) / 'MLP_target_data_map.json', 'w') as f:
-        json.dump(MLP_target_data_map, f)
-
-    with open(Path(model_folder_path) / 'MLP_input_data_map.json', 'w') as f:
-        json.dump(MLP_input_data_map, f)
+    save_data_info(input_data, target_data, model_folder_path, 'MLP')
     
     input_data = min_max_normalize(input_data)
     target_data = min_max_normalize(target_data)
