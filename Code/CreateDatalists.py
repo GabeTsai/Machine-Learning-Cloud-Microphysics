@@ -1,12 +1,10 @@
 import xarray as xr
 import numpy as np
+from pathlib import Path
 import os
 
 #Open file, initialize data arrays
-data_folder_file_path = '../../../Data' #Path to data folder from file in Models/CNNs
-file = 'ena25jan2023.nc'
-cloud_ds = xr.open_dataset(data_folder_file_path + '/' + file, group = 'DiagnosticsClouds/profiles')
-var_name = ['qc_autoconv_cloud', 'nc_autoconv_cloud', 'qr_autoconv_cloud', 'nr_autoconv_cloud', 'auto_cldmsink_b_cloud']
+var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud', 'qr_autoconv_cloud', 'nr_autoconv_cloud', 'auto_cldmsink_b_cloud']
 log_list = [False, False, True, True, True] # True if log transformation is needed
 
 THRESHOLD_VALUES = 0.62 * 721
@@ -56,14 +54,30 @@ def prepare_dataset(dataset, log, index_list):
         dataset_copy = np.nan_to_num(dataset_copy, nan = 0)
 
     data = extract_data(dataset_copy, index_list)
-    data = min_max_normalize(data)
+    # data = min_max_normalize(data)
     return data.tolist()
 
-def create_data_map(index_list):
+def create_data_map(data_file_path):
     '''
     Create map to store all data arrays
     '''
+    cloud_ds = xr.open_dataset(data_file_path, group = 'DiagnosticsClouds/profiles')
+    index_list = find_nonzero_threshold(cloud_ds[var_names[0]], THRESHOLD_VALUES)
     data_map = {}
-    for i in range(len(var_name)):
-        data_map[var_name[i]] = prepare_dataset(cloud_ds[var_name[i]], log_list[i], index_list)
-    return data_map
+    for i in range(len(var_names)):
+        data_map[var_names[i]] = prepare_dataset(cloud_ds[var_names[i]], log_list[i], index_list)
+    return data_map, index_list, cloud_ds
+
+def prepare_datasets(data_folder_path):
+    '''
+    Return a list of logged, un-normalized data maps for each NetCDF file in the data folder
+    '''
+    data_maps = []
+    data_list = os.listdir(data_folder_path)
+
+    for data_file in data_list:
+        data_file_path = Path(data_folder_path) / str(data_file)
+        data_map, index_list, cloud_ds = create_data_map(data_file_path)
+        data_maps.append(data_map)
+    
+    return data_maps
