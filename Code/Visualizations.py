@@ -209,6 +209,7 @@ def plot_losses(train_losses, val_losses, model_name):
     '''
     Plot the training and validation losses
     '''
+    plt.clf()
     plt.plot(train_losses, label = 'Training loss')
     plt.plot(val_losses, label = 'Validation loss')
     plt.xlabel('Epoch')

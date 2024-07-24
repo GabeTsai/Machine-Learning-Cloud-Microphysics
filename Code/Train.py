@@ -184,7 +184,7 @@ def train_single(model, criterion, optimizer, dataset, batch_size, early_stop, d
     min_val_loss = np.inf
     epoch = start_epoch
     early_stop_counter = 0
-    while early_stop_counter < early_stop:
+    while early_stop_counter < 3:
         model.train()
         epoch_loss = 0.0
         if epoch in decay_lr_at:
@@ -211,7 +211,7 @@ def train_single(model, criterion, optimizer, dataset, batch_size, early_stop, d
         if avg_val_loss < min_val_loss:
             min_val_loss = avg_val_loss
             print(f'Saving model for lower avg min validation loss: {min_val_loss}')
-            save_checkpoint(epoch, model, model_name, optimizer, model_folder_path)
+            # save_checkpoint(epoch, model, model_name, optimizer, model_folder_path)
             early_stop_counter = 0
         val_losses.append(avg_val_loss)
         early_stop_counter += 1
