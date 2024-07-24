@@ -30,6 +30,10 @@ def prepare_dataset_LSTM(data_map, seq_length):
     input_arr = np.concatenate(inputs, axis = 0)
     target_arr = np.concatenate(targets, axis = 0)
 
+    target_data_mask = target_arr != np.max(target_arr)
+    target_arr = target_arr[target_data_mask]
+    input_arr = input_arr[target_data_mask]
+
     return input_arr, target_arr
 
 def concat_data(data_maps, model_folder_path, seq_length):
@@ -43,11 +47,6 @@ def concat_data(data_maps, model_folder_path, seq_length):
 
     input_data = np.concatenate(input_list, axis=0)
     target_data = np.concatenate(target_list, axis=0)
-
-    #Remove outliers
-    target_data_mask = target_data != np.max(target_data)
-    target_data = target_data[target_data_mask]
-    input_data = input_data[target_data_mask]
 
     input_data = np.transpose(input_data, (0, 2, 1))
     save_data_info(input_data, target_data, model_folder_path, 'LSTM')
