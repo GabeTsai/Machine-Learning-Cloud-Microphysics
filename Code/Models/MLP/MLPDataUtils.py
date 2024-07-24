@@ -41,7 +41,7 @@ def concat_data(data_maps, model_folder_path):
     target_list = []
 
     for data_map in data_maps:
-        inputs, targets = prepare_dataset_MLP(data_map, True) 
+        inputs, targets = prepare_dataset_MLP(data_map, False) 
         input_list.append(inputs) 
         target_list.append(targets) 
 
