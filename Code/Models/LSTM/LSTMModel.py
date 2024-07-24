@@ -11,9 +11,9 @@ class LSTM(nn.Module):
         self.fc.bias = torch.nn.Parameter(output_bias)
 
     def forward(self, x):
-        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
-        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).requires_grad_()
-        out, _ = self.lstm(x, (h0.detach(), c0.detach()))
-        out = self.fc(out[:, -1, :]) #only take the last output (many to one)
+        # Move h0 and c0 to the same device as x
+        h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device).requires_grad_()
+        c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device).requires_grad_()
+        out, _ = self.lstm(x, (h0, c0))
+        out = self.fc(out[:, -1, :])  # only take the last output (many to one)
         return out
-    

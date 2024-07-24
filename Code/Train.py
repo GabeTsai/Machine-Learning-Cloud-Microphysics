@@ -16,6 +16,8 @@ import json
 
 torch.manual_seed(99)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 def reset_weights(model):
     '''
     Reset weights to avoid weight leakage
@@ -228,14 +230,15 @@ def main():
     model_folder_path = f'../SavedModels/{model_name}'
     seq_length = 8
     input_data, target_data = create_LSTM_dataset(data_folder_path, model_folder_path, seq_length)
-    print(input_data.shape)
-    print(target_data.shape)
+    
+    input_data = input_data.to(device)
+    target_data = target_data.to(device)
     
     #Change model specifics below
     #CNN Parameters 
     # model = LargerCNN(input_data.shape[2], torch.full(input_data.shape[2], torch.mean(target_data)))
     if checkpoint_path is None:
-        model = MLP(input_data.shape[1], torch.mean(target_data))
+        # model = MLP(input_data.shape[1], torch.mean(target_data))
         model = LSTM(input_data.shape[2], 32, 1, 2, torch.mean(target_data))
         learning_rate = 2e-4
         weight_decay = 1e-5
@@ -250,6 +253,7 @@ def main():
         optimizer = checkpoint['optimizer']
     dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
+    model = model.to(device)
     epochs = 2000
     batch_size = 32
     k_folds = 10

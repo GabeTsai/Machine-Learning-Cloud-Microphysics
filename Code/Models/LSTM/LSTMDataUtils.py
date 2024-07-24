@@ -15,15 +15,14 @@ def prepare_dataset_LSTM(data_map, seq_length):
     '''
     qc_autoconv_cloud = np.array(data_map['qc_autoconv_cloud'])
     nc_autoconv_cloud = np.array(data_map['nc_autoconv_cloud'])
-    qr_autoconv_cloud = np.array(data_map['qr_autoconv_cloud'])
-    nr_autoconv_cloud = np.array(data_map['nr_autoconv_cloud'])
+    # qr_autoconv_cloud = np.array(data_map['qr_autoconv_cloud'])
+    # nr_autoconv_cloud = np.array(data_map['nr_autoconv_cloud'])
     auto_cldmsink_b_cloud = np.array(data_map['auto_cldmsink_b_cloud'])
     inputs = []
     targets = []
 
     for i in range(len(qc_autoconv_cloud) - seq_length): #apply a sliding window of size seq_length to extract input sequences
-        sequence = np.stack((qc_autoconv_cloud[:, i:i+seq_length], nc_autoconv_cloud[:, i:i+seq_length], 
-                                qr_autoconv_cloud[:, i:i+seq_length], nr_autoconv_cloud[:, i:i+seq_length]), axis = 1) #(height_channels, num_features, seq_length)
+        sequence = np.stack((qc_autoconv_cloud[:, i:i+seq_length], nc_autoconv_cloud[:, i:i+seq_length]), axis = 1) #(height_channels, num_features, seq_length)
         inputs.append(sequence) #(height_channels, seq_length, num_features)
         targets.append(auto_cldmsink_b_cloud[:, i+seq_length]) #(height_channels)
     
