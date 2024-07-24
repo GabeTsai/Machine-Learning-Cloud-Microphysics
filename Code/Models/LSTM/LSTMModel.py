@@ -6,7 +6,7 @@ class LSTM(nn.Module):
         super(LSTM, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first= True) #inputs: (batch, seq_len, num_features)
+        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first= True) #(batch, seq_len, num_features)
         self.fc = nn.Linear(hidden_dim, output_dim)
         self.fc.bias = torch.nn.Parameter(output_bias)
 
