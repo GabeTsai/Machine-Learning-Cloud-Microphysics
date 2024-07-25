@@ -87,8 +87,6 @@ def save_data_info(inputs, targets, model_folder_path, model_name):
     input_data_map = {}
     input_data_map['qc'] = {'min': np.min(inputs[:, 0]), 'max': np.max(inputs[:, 0])}
     input_data_map['nc'] = {'min': np.min(inputs[:, 1]), 'max': np.max(inputs[:, 1])}
-    input_data_map['qr'] = {'min': np.min(inputs[:, 2]), 'max': np.max(inputs[:, 2])}
-    input_data_map['nr'] = {'min': np.min(inputs[:, 3]), 'max': np.max(inputs[:, 3])}
 
     target_data_map = {}
     target_data_map['mean'] = np.mean(targets)

@@ -18,6 +18,7 @@ torch.manual_seed(99)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+print(device)
 def reset_weights(model):
     '''
     Reset weights to avoid weight leakage
@@ -186,7 +187,7 @@ def train_single(model, criterion, optimizer, dataset, batch_size, early_stop, d
     min_val_loss = np.inf
     epoch = start_epoch
     early_stop_counter = 0
-    while early_stop_counter < 3:
+    while early_stop_counter < early_stop:
         model.train()
         epoch_loss = 0.0
         if epoch in decay_lr_at:
@@ -226,10 +227,10 @@ def train_single(model, criterion, optimizer, dataset, batch_size, early_stop, d
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
-    model_name = 'LSTM'
+    model_name = 'MLP'
     model_folder_path = f'../SavedModels/{model_name}'
     seq_length = 8
-    input_data, target_data = create_LSTM_dataset(data_folder_path, model_folder_path, seq_length)
+    input_data, target_data = create_MLP_dataset(data_folder_path, model_folder_path)
     
     input_data = input_data.to(device)
     target_data = target_data.to(device)
@@ -238,8 +239,8 @@ def main():
     #CNN Parameters 
     # model = LargerCNN(input_data.shape[2], torch.full(input_data.shape[2], torch.mean(target_data)))
     if checkpoint_path is None:
-        # model = MLP(input_data.shape[1], torch.mean(target_data))
-        model = LSTM(input_data.shape[2], 32, 1, 2, torch.mean(target_data))
+        model = MLP(input_data.shape[1], torch.mean(target_data))
+        # model = LSTM(input_data.shape[2], 32, 1, 2, torch.mean(target_data))
         learning_rate = 2e-4
         weight_decay = 1e-5
         criterion = nn.MSELoss()
@@ -255,7 +256,7 @@ def main():
 
     model = model.to(device)
     epochs = 2000
-    batch_size = 32
+    batch_size = 128
     k_folds = 10
     early_stop = 500
 
