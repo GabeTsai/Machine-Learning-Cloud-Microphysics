@@ -16,13 +16,17 @@ import pandas as pd
 import ray
 from ray import tune
 from ray.tune.schedulers import ASHAScheduler
+import os
 import json
+
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Adjust this as needed
+os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 torch.manual_seed(99)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device = "cpu"
 
-print(device)
 def decay_lr(optimizer, decay_rate):
     '''
     Decay learning rate by decay_rate
@@ -68,7 +72,7 @@ def define_hyperparameter_search_space(model_name):
         "hl1": tune.sample_from(lambda _: 2 ** np.random.randint(5, 8)),
         "hl2": tune.sample_from(lambda _: 2 ** np.random.randint(2, 6)),
         "lr": tune.loguniform(1e-5, 1e-3),
-        "batch_size": tune.choice([32, 64, 128]),
+        "batch_size": tune.choice([128, 256, 512]),
         "weight_decay": tune.loguniform(1e-6, 1e-4),
         }
     else:
@@ -108,11 +112,13 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         avg_train_loss = epoch_loss / len(train_loader)
         train_losses.append(avg_train_loss)
-        for i, data in enumerate(val_loader):
-            inputs, targets = data
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            epoch_loss += loss.item()
+        epoch_loss = 0.0
+        with torch.no_grad():
+            for i, data in enumerate(val_loader):
+                inputs, targets = data
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                epoch_loss += loss.item()
         avg_val_loss = epoch_loss / len(val_loader)
         print(f'Epoch {epoch} || training loss: {avg_train_loss} || validation loss: {avg_val_loss}')
         if avg_val_loss < min_val_loss:
@@ -148,14 +154,13 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_i)
 
         train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler)
+            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = 32, pin_memory = True)
 
         val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler)
+            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = 32, pin_memory = True)
 
-        print(input.shape, target.shape)
         model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
-
+        
         criterion = nn.MSELoss()
         optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
 
@@ -181,45 +186,16 @@ def load_data(data_folder_path, model_folder_path, model_name):
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
-    model_name = 'MLP'
-    model_name = 'MLP2'
+    model_name = 'MLP2' 
     model_folder_path = f'../SavedModels/{model_name}'
     seq_length = 8
-    input_data, target_data = create_MLP_dataset(data_folder_path, model_folder_path)
-    
-    input_data = input_data.to(device)
-    target_data = target_data.to(device)
-    
-    #Change model specifics below
-    #CNN Parameters 
-    # model = LargerCNN(input_data.shape[2], torch.full(input_data.shape[2], torch.mean(target_data)))
-    if checkpoint_path is None:
-        model = MLP(input_data.shape[1], torch.mean(target_data))
-        # model = LSTM(input_data.shape[2], 32, 1, 2, torch.mean(target_data))
-        learning_rate = 2e-4
-        weight_decay = 1e-5
-        criterion = nn.MSELoss()
-        optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate, weight_decay = weight_decay)
-        start_epoch = 0
-    else:
-        checkpoint = torch.load(checkpoint_path)
-        start_epoch = checkpoint['epoch'] + 1
-        print('\nLoaded checkpoint from epoch %d.\n' % start_epoch)
-        model = checkpoint['model']
-        optimizer = checkpoint['optimizer']
+
     max_num_epochs = 5000
 
     input_data, target_data = load_data(data_folder_path, model_folder_path, model_name)
 
     dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
-    model = model.to(device)
-    epochs = 2000
-    batch_size = 128
-    k_folds = 10
-    early_stop = 500
-
-    decay_lr_at = []
     test_percentage = 0.1 # 10% of data used for testing
     test_size = int(len(input_data) * test_percentage)
     k_fold_train_size = len(input_data) - test_size
@@ -236,17 +212,36 @@ def main():
         reduction_factor = 2
     )
 
-    analysis = tune.run(
-        tune.with_parameters(train_k_fold, dataset = k_fold_dataset, 
-                             model_name = model_name, model_folder_path = model_folder_path, ), # Pass in dataset for k-fold training
-        config = config, 
-        num_samples = 10,
-        scheduler = scheduler,
-        verbose = 1,
-        resources_per_trial = {"cpu": 3},
-        max_concurrent_trials = 3  # Limit to 4 concurrent trials
+    # analysis = tune.run(
+    #     tune.with_parameters(train_k_fold, dataset = k_fold_dataset, 
+    #                          model_name = model_name, model_folder_path = model_folder_path, ), # Pass in dataset for k-fold training
+    #     config = config, 
+    #     num_samples = 10,
+    #     scheduler = scheduler,
+    #     verbose = 1,
+    #     resources_per_trial = {"cpu": 16, "gpu": 1},
+    #     max_concurrent_trials = 1  # Limit to 4 concurrent trials
+    # )
+
+    tuner = tune.Tuner(
+        tune.with_resources(
+            tune.with_parameters(train_k_fold, dataset=k_fold_dataset,
+                                 model_name=model_name, model_folder_path=model_folder_path),
+            resources={"cpu": 32, "gpu": 1}
+        ),
+        param_space=config,
+        tune_config=tune.TuneConfig(
+            scheduler=scheduler,
+            num_samples=10,
+            max_concurrent_trials=1  # Limit to 1 concurrent trial
+        ), 
+        run_config=ray.air.config.RunConfig(
+            name = "tune_k_fold",
+            verbose=1
+        )
     )
-    
+
+    analysis = tuner.fit()
     print("Best hyperparameters found were: ", analysis.best_config)
     print("Best validation loss found was: ", analysis.best_result)
     with open (f'{model_folder_path}/best_config.txt', 'w') as f:
