@@ -6,7 +6,7 @@ import json
 import sys
 sys.path.append('../../')
 from CreateDataLists import * # Import functions and variables from CreateDataLists.py
-from Visualizations import histogram
+
 from pathlib import Path
 
 def prepare_dataset_MLP(data_map, include_qr_nr = True):
@@ -32,7 +32,7 @@ def prepare_dataset_MLP(data_map, include_qr_nr = True):
     print(input_data.shape)
     return input_data, target_data
 
-def concat_data(data_maps, model_folder_path):
+def concat_data(data_maps, model_folder_path, include_qr_nr):
     '''
     Concatenate data from data maps into tensors
     :param data_maps: list of data maps
@@ -41,7 +41,7 @@ def concat_data(data_maps, model_folder_path):
     target_list = []
 
     for data_map in data_maps:
-        inputs, targets = prepare_dataset_MLP(data_map, False) 
+        inputs, targets = prepare_dataset_MLP(data_map, include_qr_nr) 
         input_list.append(inputs) 
         target_list.append(targets) 
 
@@ -49,30 +49,28 @@ def concat_data(data_maps, model_folder_path):
     input_data = np.concatenate(input_list, axis=0)
     target_data = np.concatenate(target_list, axis=0)
 
-    #Remove outliers
-    print(target_data.shape)
-    target_data_mask = target_data != np.max(target_data)
-    target_data = target_data[target_data_mask]
-    input_data = input_data[target_data_mask]
-
     save_data_info(input_data, target_data, model_folder_path, 'MLP')
     
     input_data = min_max_normalize(input_data)
     target_data = min_max_normalize(target_data)
 
-    print(input_data.shape)
-    print(target_data.shape)
+    # Remove outliers
 
-    return torch.FloatTensor(input_data), torch.FloatTensor(target_data)
+    filter_mask = remove_outliers(target_data)
+    target_data = target_data[filter_mask]
+    input_data = input_data[filter_mask]
 
-def create_MLP_dataset(data_folder_path, model_folder_path):
+    return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
+
+def create_MLP_dataset(data_folder_path, model_folder_path, include_qr_nr):
     data_maps = prepare_datasets(data_folder_path)
-    inputs, targets = concat_data(data_maps, model_folder_path)
+    inputs, targets = concat_data(data_maps, model_folder_path, include_qr_nr)
+    print(inputs.shape, targets.shape)
     return inputs, targets
 
 def main():
-    model_name = 'MLP'
-    create_MLP_dataset('../../../Data/NetCDFFiles', f'../../../SavedModels/{model_name}')
+    model_name = 'MLP2'
+    create_MLP_dataset('../../../Data/NetCDFFiles', f'../../../SavedModels/{model_name}', False)
 
 if __name__ == "__main__":
     main()

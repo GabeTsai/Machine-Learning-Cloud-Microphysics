@@ -205,7 +205,7 @@ def plot_CNN_Fold_predictions(predictions, true_values, cloud_ds, test_indices, 
         else:
             print('Invalid plot type')
 
-def plot_losses(train_losses, val_losses, model_name):
+def plot_losses(train_losses, val_losses, model_name, fold):
     '''
     Plot the training and validation losses
     '''
@@ -216,7 +216,7 @@ def plot_losses(train_losses, val_losses, model_name):
     plt.ylabel('Loss')
     plt.legend()
     plt.title(f'{model_name} Training and Validation Losses')
-    plt.savefig(Path(f'../Visualizations/{model_name}/TrainingLosses.png'))
+    plt.savefig(Path(f'../Visualizations/{model_name}_fold{fold}/TrainingLosses.png'))
 
 def setup_predictions(model, model_folder_path, model_name, denormalize = True):
     '''

@@ -11,6 +11,17 @@ log_list = [False, False, True, True, True] # True if log transformation is need
 THRESHOLD_VALUES = 0.62 * 721
 THRESHOLD = 1e-6
 
+def remove_outliers(arr): 
+    '''
+    Return mask of outliers to be removed from array
+    '''
+    q1 = np.percentile(arr, 25)
+    q3 = np.percentile(arr, 75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    return (arr > lower_bound) & (arr < upper_bound)
+
 def min_max_normalize(data):
     '''
     Normalize data to range [0, 1]
@@ -87,8 +98,6 @@ def save_data_info(inputs, targets, model_folder_path, model_name):
     input_data_map = {}
     input_data_map['qc'] = {'min': np.min(inputs[:, 0]), 'max': np.max(inputs[:, 0])}
     input_data_map['nc'] = {'min': np.min(inputs[:, 1]), 'max': np.max(inputs[:, 1])}
-    input_data_map['qr'] = {'min': np.min(inputs[:, 2]), 'max': np.max(inputs[:, 2])}
-    input_data_map['nr'] = {'min': np.min(inputs[:, 3]), 'max': np.max(inputs[:, 3])}
 
     target_data_map = {}
     target_data_map['mean'] = np.mean(targets)
