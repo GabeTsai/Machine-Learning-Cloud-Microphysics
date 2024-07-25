@@ -24,8 +24,8 @@ os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
 
 torch.manual_seed(99)
 
-# device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-device = "cpu"
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# device = "cpu"
 
 def decay_lr(optimizer, decay_rate):
     '''
@@ -63,7 +63,7 @@ def choose_model(model_name, input_dim, target_dim, output_bias, config):
     else:
         raise ValueError('Model name not recognized.')
     
-def define_hyperparameter_search_space(model_name):
+def define_hyperparameter_search_space(model_name, device):
     '''
     Define hyperparameter search space. Adjust as necessary.
     '''
