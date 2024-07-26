@@ -180,9 +180,10 @@ def load_data(data_folder_path, model_folder_path, model_name):
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
-    model_name = 'MLP2'
+    model_name = 'MLP2' 
     model_folder_path = f'../SavedModels/{model_name}'
     seq_length = 8
+
     max_num_epochs = 5000
 
     input_data, target_data = load_data(data_folder_path, model_folder_path, model_name)
