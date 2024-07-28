@@ -6,6 +6,7 @@ import json
 import sys
 sys.path.append('../../')
 from CreateDataLists import * # Import functions and variables from CreateDataLists.py
+from Visualizations import histogram
 
 from pathlib import Path
 
@@ -29,7 +30,6 @@ def prepare_dataset_MLP(data_map, include_qr_nr = True):
 
     target_data = auto_cldmsink_b_cloud # (time * height_channels)
 
-    print(input_data.shape)
     return input_data, target_data
 
 def concat_data(data_maps, model_folder_path, include_qr_nr):
@@ -49,16 +49,14 @@ def concat_data(data_maps, model_folder_path, include_qr_nr):
     input_data = np.concatenate(input_list, axis=0)
     target_data = np.concatenate(target_list, axis=0)
 
-    save_data_info(input_data, target_data, model_folder_path, 'MLP')
-    
-    input_data = min_max_normalize(input_data)
-    target_data = min_max_normalize(target_data)
-
-    # Remove outliers
-
     filter_mask = remove_outliers(target_data)
     target_data = target_data[filter_mask]
     input_data = input_data[filter_mask]
+
+    save_data_info(input_data, target_data, model_folder_path, 'MLP')
+
+    input_data = min_max_normalize(input_data)
+    target_data = min_max_normalize(target_data)
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
@@ -70,7 +68,8 @@ def create_MLP_dataset(data_folder_path, model_folder_path, include_qr_nr):
 
 def main():
     model_name = 'MLP2'
-    create_MLP_dataset('../../../Data/NetCDFFiles', f'../../../SavedModels/{model_name}', False)
+    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', f'../../../SavedModels/{model_name}', False)
+    histogram(targets, targets, model_name)
 
 if __name__ == "__main__":
     main()
