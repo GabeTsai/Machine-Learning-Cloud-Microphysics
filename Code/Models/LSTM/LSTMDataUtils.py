@@ -15,8 +15,6 @@ def prepare_dataset_LSTM(data_map, seq_length):
     '''
     qc_autoconv_cloud = np.array(data_map['qc_autoconv_cloud'])
     nc_autoconv_cloud = np.array(data_map['nc_autoconv_cloud'])
-    # qr_autoconv_cloud = np.array(data_map['qr_autoconv_cloud'])
-    # nr_autoconv_cloud = np.array(data_map['nr_autoconv_cloud'])
     auto_cldmsink_b_cloud = np.array(data_map['auto_cldmsink_b_cloud'])
     inputs = []
     targets = []
@@ -26,14 +24,10 @@ def prepare_dataset_LSTM(data_map, seq_length):
         inputs.append(sequence) #(height_channels, seq_length, num_features)
         targets.append(auto_cldmsink_b_cloud[:, i+seq_length]) #(height_channels)
     
-    input_arr = np.concatenate(inputs, axis = 0)
-    target_arr = np.concatenate(targets, axis = 0)
+    input_data = np.concatenate(inputs, axis = 0)
+    target_data = np.concatenate(targets, axis = 0)
 
-    target_data_mask = target_arr != np.max(target_arr)
-    target_arr = target_arr[target_data_mask]
-    input_arr = input_arr[target_data_mask]
-
-    return input_arr, target_arr
+    return input_data, target_data
 
 def concat_data(data_maps, model_folder_path, seq_length):
     input_list = []
@@ -48,6 +42,11 @@ def concat_data(data_maps, model_folder_path, seq_length):
     target_data = np.concatenate(target_list, axis=0)
 
     input_data = np.transpose(input_data, (0, 2, 1))
+
+    filter_mask = remove_outliers(target_data)
+    target_data = target_data[filter_mask]
+    input_data = input_data[filter_mask]
+
     save_data_info(input_data, target_data, model_folder_path, 'LSTM')
 
     input_data = min_max_normalize(input_data)
@@ -66,6 +65,7 @@ def main():
     inputs, targets = create_LSTM_dataset(data_folder_path, model_folder_path, seq_length)
     print(inputs.shape)
     print(targets.shape)
+
 
 if __name__ == "__main__":
     main()
