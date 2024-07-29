@@ -29,7 +29,7 @@ def prepare_dataset_LSTM(data_map, seq_length):
 
     return input_data, target_data
 
-def concat_data(data_maps, model_folder_path, seq_length):
+def concat_data(data_maps, model_folder_path, seq_length, model_name):
     input_list = []
     target_list = []
 
@@ -43,29 +43,29 @@ def concat_data(data_maps, model_folder_path, seq_length):
 
     input_data = np.transpose(input_data, (0, 2, 1))
 
+    save_data_info(input_data, target_data, model_folder_path, model_name)
+
+    input_data = min_max_normalize(input_data, model_name)
+    target_data = min_max_normalize(target_data)
+
     filter_mask = remove_outliers(target_data)
     target_data = target_data[filter_mask]
     input_data = input_data[filter_mask]
-
-    save_data_info(input_data, target_data, model_folder_path, 'LSTM')
-
-    input_data = min_max_normalize(input_data)
-    target_data = min_max_normalize(target_data)
+    
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data)
 
-def create_LSTM_dataset(data_folder_path, model_folder_path, seq_length):
+def create_LSTM_dataset(data_folder_path, model_folder_path, seq_length, model_name):
     data_maps = prepare_datasets(data_folder_path)
-    inputs, targets = concat_data(data_maps, model_folder_path, seq_length)
+    inputs, targets = concat_data(data_maps, model_folder_path, seq_length, model_name)
     return inputs, targets
 
 def main():
     data_folder_path = '../../../Data/NetCDFFiles'
     model_folder_path = '../../../SavedModels/LSTM'
     seq_length = 8
-    inputs, targets = create_LSTM_dataset(data_folder_path, model_folder_path, seq_length)
+    inputs, targets = create_LSTM_dataset(data_folder_path, model_folder_path, seq_length, 'LSTM')
     print(inputs.shape)
     print(targets.shape)
-
 
 if __name__ == "__main__":
     main()

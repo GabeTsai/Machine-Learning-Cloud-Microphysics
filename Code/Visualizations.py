@@ -1,6 +1,8 @@
 import numpy as np
 import torch
 import torch.nn as nn
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import mpl_scatter_density
 from matplotlib.colors import LinearSegmentedColormap
@@ -27,10 +29,6 @@ def predict(model, test_dataset):
     
     return predictions_np, true_values_np
 
-def get_loss(predictions, targets):
-    criterion = nn.MSELoss()
-    loss = criterion(torch.FloatTensor(predictions), torch.FloatTensor(targets))
-    print(f'Mean Squared Error: {loss.item()}')
 
 def predict_fold(model, fold, inputs, targets, test_indices):
     '''
@@ -70,22 +68,8 @@ def denormalize_delog(arr, arr_min, arr_max):
     '''
     Denormalize and unlog the array
     '''
-    return np.exp(min_max_denormalize(arr, arr_min, arr_max), 
-                  out=np.zeros_like(arr, dtype=np.float64), where = arr > 0)
-
-def prepare_pred(predictions, true_values, min, max, denormalize = True):
-    '''
-    Denormalize and unlog the predictions and true values (ignore 0 values)
-    '''
-    if denormalize:
-        predictions = denormalize_delog(predictions, min, max)
-        true_values = denormalize_delog(true_values, min, max)
-    
-    print(np.median(predictions)) 
-    print(np.median(true_values)) 
-    print(np.max(predictions))  
-    print(np.max(true_values))   
-    return predictions, true_values
+    denorm_arr = min_max_denormalize(arr, arr_min, arr_max)
+    return np.exp(denorm_arr, out=np.zeros_like(arr, dtype=np.float64), where = arr > 0)
 
 def plot_pred_single_sample_time(true_values, predicted_values, i, time, height_map, ax):
     '''
@@ -218,19 +202,16 @@ def plot_losses(train_losses, val_losses, model_name, fold):
     plt.title(f'{model_name} Training and Validation Losses')
     plt.savefig(Path(f'../Visualizations/{model_name}_fold{fold}/TrainingLosses.png'))
 
-def setup_predictions(model, model_folder_path, model_name, denormalize = True):
+def denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset):
     '''
-    Prepare predictions for plotting and analysis
+    De-normalize and de-log predictions using test dataset.
     '''
     with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'r') as f:
         target_data_map = json.load(f)
-    test_dataset = torch.load(Path(model_folder_path) / f'{model_name}_test_dataset.pth')
-    
     min_val = target_data_map['min']
     max_val = target_data_map['max']
-    model.load_state_dict(torch.load(Path(model_folder_path) / f'{model_name}.pth'))
-    predictions, true_values = predict(model, test_dataset)
-    predictions, true_values = prepare_pred(predictions, true_values, min_val, max_val, denormalize)
+    predictions = denormalize_delog(predictions, min_val, max_val)
+    true_values = denormalize_delog(predictions, min_val, max_val)
     return predictions, true_values
     
 def scatter_plot(predicted_values, true_values, model_name):
@@ -241,9 +222,9 @@ def scatter_plot(predicted_values, true_values, model_name):
     plt.scatter(predicted_values, true_values, s = 5)
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
-    plt.xlim(0, np.max(true_values))
-    plt.ylim(0, np.max(true_values))
     plt.title('Predicted vs True values')
+    plt.xlim(0, )
+    plt.ylim(0, )
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot.png'))
 
 def density_plot(predicted_values, true_values, model_name):
@@ -259,27 +240,27 @@ def density_plot(predicted_values, true_values, model_name):
     
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
-    density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis, dpi = 30)
-    density.set_clim(0, 50) 
+    density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis, dpi = 50)
+    density.set_clim(0, 100) 
     fig.colorbar(density, label = 'Number of points per pixel') 
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
-    plt.xlim(0, np.max(true_values))
-    plt.ylim(0, np.max(true_values))
     plt.title('Predicted vs True values')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot.png'))
 
-def histogram(predicted_values, true_values, model_name):
+def histogram(predicted_values, true_values, model_name, vis_folder_path):
     '''
     Plot a histogram of the true and predicted values.
     '''
-    plt.hist(predicted_values, bins = 20, alpha = 0.5, label = 'Predicted values')
-    plt.hist(true_values, bins = 20, alpha = 0.5, label = 'True values')
+    plt.clf()
+    plt.hist(predicted_values, bins = 200, alpha = 0.5, label = 'Predicted values')
+    plt.hist(true_values, bins = 200, alpha = 0.5, label = 'True values')
     plt.xlabel('auto_cldmsink_b_cloud (kg/kg/s)')
     plt.ylabel('Frequency')
     plt.title('Histogram of Predicted and True values')
     plt.legend()
-    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}Histogram.png'))
+    plt.show()
+    plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram.png'))
 
 def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     '''
@@ -302,35 +283,35 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     nc = min_max_denormalize(nc, nc_min, nc_max)
 
     eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
-    print(eq_autoconv_rate)
-    print(predictions)
+   
     criterion = nn.MSELoss()
+    print(np.mean(true_values))
     print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
-    print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate), torch.FloatTensor(true_values))}')
+    print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
 
-    # plt.scatter(true_values, true_values, label = 'True values', s = 5)
-    # plt.scatter(predictions, predictions, label = 'ML predictions', s = 5)
-    # plt.scatter(eq_autoconv_rate, eq_autoconv_rate, label = 'KK2000 predictions', s = 5)
+    # histogram(predictions, true_values, model_name, f'../Visualizations')
+    scatter_plot(eq_autoconv_rate, true_values, model_name)
 
 def main():
-    fold = 9
-    model_name = 'MLP'
-    model_folder_path = f'../SavedModels/{model_name}'
-    data_folder = '../../Data'
-    data_file = 'ena25jan2023.nc'
+    from Train import choose_model, test_best_config
 
-    model = MLP(4, torch.zeros(()))
-    predictions, true_values = setup_predictions(model, model_folder_path, model_name, True)
-    get_loss(predictions, true_values)
+    fold = 9
+    model_name = 'MLP2'
+    model_folder_path = f'../SavedModels/{model_name}'
+    vis_folder_path = f'../Visualizations/{model_name}'
+    data_file = 'ena25jan2023.nc'
+    model_file_name = 'best_model_MLP2hl164hl232lr0.00047062799189482777weight_decay2.8594198351051737e-06batch_size128max_epochs200.pth'
+    test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
+    denorm_log_pred = True
+    test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
+
+    predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
+    if denorm_log_pred:
+        predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset)
     scatter_plot(predictions, true_values, model_name)
     density_plot(predictions, true_values, model_name)
     compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
-    # model = LargerCNN(NUM_HEIGHT_LEVELS, torch.zeros(30, ))
-    
-    # model, cloud_ds, test_indices, time_list, height_map, inputs, targets = setup_CNN_Fold_predictions(model, data_folder, data_file, fold, model_folder_path, model_name)
 
-    # predictions, true_values = predict_fold(model, fold, inputs, targets, test_indices)
-    # plot_CNN_Fold_predictions(predictions, true_values, cloud_ds, test_indices, fold, model, time_list, height_map, 'multiple_samples')
     
     
 if __name__ == "__main__":
