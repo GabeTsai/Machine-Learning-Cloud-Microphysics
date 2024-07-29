@@ -32,7 +32,7 @@ def prepare_dataset_MLP(data_map, include_qr_nr = True):
 
     return input_data, target_data
 
-def concat_data(data_maps, model_folder_path, include_qr_nr):
+def concat_data(data_maps, model_name, model_folder_path, include_qr_nr):
     '''
     Concatenate data from data maps into tensors
     :param data_maps: list of data maps
@@ -53,23 +53,23 @@ def concat_data(data_maps, model_folder_path, include_qr_nr):
     target_data = target_data[filter_mask]
     input_data = input_data[filter_mask]
 
-    save_data_info(input_data, target_data, model_folder_path, 'MLP')
+    save_data_info(input_data, target_data, model_folder_path, model_name)
 
-    input_data = min_max_normalize(input_data)
-    target_data = min_max_normalize(target_data)
+    input_data = min_max_normalize(input_data, model_name)
+    target_data = min_max_normalize(target_data, model_name)
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
-def create_MLP_dataset(data_folder_path, model_folder_path, include_qr_nr):
+def create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_qr_nr):
     data_maps = prepare_datasets(data_folder_path)
-    inputs, targets = concat_data(data_maps, model_folder_path, include_qr_nr)
+    inputs, targets = concat_data(data_maps, model_name, model_folder_path, include_qr_nr)
     print(inputs.shape, targets.shape)
     return inputs, targets
 
 def main():
     model_name = 'MLP2'
-    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', f'../../../SavedModels/{model_name}', False)
-    histogram(targets, targets, model_name)
+    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, f'../../../SavedModels/{model_name}', False)
+    histogram(inputs[:, 1], inputs[:, 1], model_name, '../../../Visualizations')
 
 if __name__ == "__main__":
     main()
