@@ -24,4 +24,4 @@ class LSTM(nn.Module):
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device).requires_grad_()
         out, _ = self.lstm(x, (h0, c0))
         out = self.fc(out[:, -1, :])  # only take the last output (many to one)
-        return out
+        return torch.squeeze(out)

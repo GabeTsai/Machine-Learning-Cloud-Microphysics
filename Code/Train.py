@@ -108,7 +108,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
         input_data, target_data = create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
     return input_data, target_data
 
-def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name, fold):
+def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name):
     '''
     Train the model on a single train/test/val split until validation loss has not reached a new minimum in early_stop epochs.
 
@@ -172,16 +172,43 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     Train on a single train-valid split (provided dataset is big enough)
     '''
     input, target = dataset[0]
-
     _, targets = dataset[:]
     output_bias = torch.mean(targets)
-
     best_loss = np.inf
     best_model = None
 
     model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
 
-    
+    val_percent = 0.2
+    val_size = int(val_percent * len(dataset))
+    train_size = len(dataset) - val_size
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+
+    train_loader = torch.utils.data.DataLoader(
+            dataset, batch_size= int(config["batch_size"]), num_workers = 16, pin_memory = True)
+
+    val_loader = torch.utils.data.DataLoader(
+            dataset, batch_size = int(config["batch_size"]), num_workers = 16, pin_memory = True)
+
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
+
+    start_epoch = 0
+    early_stop = 100
+    decay_lr_at = []
+
+    val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
+                                        config["max_epochs"], decay_lr_at, start_epoch, model_folder_path, model_name)
+
+    model_key = ''.join(f'{key}{str(item)}' for key, item in config.items()) # Create unique file key based on model config
+    model_data = {
+        'model_state_dict': best_model, #model weights
+        'config': config #model hyperparams
+    }
+    save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
+    torch.save(model_data, save_path)  # Save the best model state
+    mean_val_loss = np.mean(val_losses)
+    session.report({"mean_val_loss": mean_val_loss})
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     '''
@@ -217,7 +244,7 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
         early_stop = 100
         decay_lr_at = []
 
-        val_loss, model_state = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, config["max_epochs"], decay_lr_at, start_epoch, model_folder_path, model_name, fold)
+        val_loss, model_state = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, config["max_epochs"], decay_lr_at, start_epoch, model_folder_path, model_name)
         val_losses.append(val_loss)
 
         if val_loss < best_loss:
@@ -258,6 +285,10 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
+    single_split = True
+    train_func = train_k_fold
+    if single_split: 
+        train_func = train_single_split
     model_name = 'LSTM' 
     model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
     
@@ -271,7 +302,7 @@ def main():
     test_size = int(len(input_data) * test_percentage)
     k_fold_train_size = len(input_data) - test_size
 
-    k_fold_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
+    train_val_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
     
     torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
 
@@ -284,12 +315,12 @@ def main():
         grace_period = 1,
         reduction_factor = 2
     )
-    
+
     tuner = tune.Tuner(
         tune.with_resources(
-            tune.with_parameters(train_k_fold, dataset=k_fold_dataset,
+            tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path),
-            resources = {"cpu": 4, "gpu": 0.25},
+            resources = {"cpu": 8, "gpu": 0.25},
         ),
         param_space=config,
         tune_config=tune.TuneConfig(
