@@ -29,7 +29,7 @@ def prepare_dataset_MLP(data_map, include_qr_nr = True):
     auto_cldmsink_b_cloud = np.array(data_map['auto_cldmsink_b_cloud']).flatten().transpose()
 
     target_data = auto_cldmsink_b_cloud # (time * height_channels)
-
+    print(np.count_nonzero(target_data == 0))
     return input_data, target_data
 
 def concat_data(data_maps, model_name, model_folder_path, include_qr_nr):
@@ -48,11 +48,9 @@ def concat_data(data_maps, model_name, model_folder_path, include_qr_nr):
     # Concatenate the data
     input_data = np.concatenate(input_list, axis=0)
     target_data = np.concatenate(target_list, axis=0)
-
     filter_mask = remove_outliers(target_data)
     target_data = target_data[filter_mask]
     input_data = input_data[filter_mask]
-
     save_data_info(input_data, target_data, model_folder_path, model_name)
 
     input_data = min_max_normalize(input_data, model_name)
@@ -69,7 +67,7 @@ def create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_
 def main():
     model_name = 'MLP2'
     inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, f'../../../SavedModels/{model_name}', False)
-    histogram(inputs[:, 1], inputs[:, 1], model_name, '../../../Visualizations')
+    histogram(targets, targets, model_name, '../../../Visualizations')
 
 if __name__ == "__main__":
     main()

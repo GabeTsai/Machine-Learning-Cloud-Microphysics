@@ -25,8 +25,8 @@ def min_max_normalize(data, model_name = '000'):
     '''
     Normalize data to range [0, 1], feature-specific or global. Ignore zeros.
     '''
-    non_zero_mask = data != 0
-    masked_data = data[non_zero_mask]
+    non_zero_mask = data != 0    
+    masked_data = np.ma.masked_array(data, mask=~non_zero_mask)
 
     if 'MLP' in model_name:
         min_vals = np.min(masked_data, axis=(0), keepdims=True)
@@ -38,7 +38,7 @@ def min_max_normalize(data, model_name = '000'):
         min_vals = np.min(masked_data)
         max_vals = np.max(masked_data)
 
-    normalized_data = (data - min_vals) / (max_vals - min_vals)
+    normalized_data = np.where(non_zero_mask, (data - min_vals) / (max_vals - min_vals), 0)
     
     return normalized_data
 

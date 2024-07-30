@@ -8,7 +8,7 @@ class LSTM(nn.Module):
 
         :param input_dim (int): The number of features in the input sequence.
         :param hidden_dim (int): The number of features in the hidden state of the LSTM.
-        :param num_layers (int): The number of recurrent layers in the LSTM.
+        :param num_layers (int): The number of recurrent layers/memory cells in the LSTM.
         :param output_bias (torch.Tensor): The initial bias for the output layer. Initialized to mean of output data
         '''
         super(LSTM, self).__init__()
@@ -24,4 +24,4 @@ class LSTM(nn.Module):
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device).requires_grad_()
         out, _ = self.lstm(x, (h0, c0))
         out = self.fc(out[:, -1, :])  # only take the last output (many to one)
-        return out
+        return torch.squeeze(out)
