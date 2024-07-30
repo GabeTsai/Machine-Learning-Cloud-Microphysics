@@ -2,13 +2,12 @@ import torch
 import torch.nn as nn
 
 class LSTM(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, num_layers, output_bias):
+    def __init__(self, input_dim, hidden_dim, num_layers, output_bias):
         '''
         LSTM-based neural network model for sequence-to-one prediction.
 
         :param input_dim (int): The number of features in the input sequence.
         :param hidden_dim (int): The number of features in the hidden state of the LSTM.
-        :param output_dim (int): The number of output features.
         :param num_layers (int): The number of recurrent layers in the LSTM.
         :param output_bias (torch.Tensor): The initial bias for the output layer. Initialized to mean of output data
         '''
@@ -16,7 +15,7 @@ class LSTM(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first= True) #(batch, seq_len, num_features)
-        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.fc = nn.Linear(hidden_dim, 1)
         self.fc.bias = torch.nn.Parameter(output_bias)
 
     def forward(self, x):

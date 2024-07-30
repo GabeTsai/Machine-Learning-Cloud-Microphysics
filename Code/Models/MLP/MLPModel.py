@@ -7,8 +7,11 @@ class MLP(nn.Module):
         self.fc1 = nn.Linear(input_dim, hl1)
         self.fc2 = nn.Linear(hl1, hl2)
         self.fc3 = nn.Linear(hl2, 1)
-        self.fc3.bias = torch.nn.Parameter(output_bias)
-
+        if output_bias is not None:
+            self.fc3.bias = torch.nn.Parameter(output_bias)
+        else:
+            nn.init.zeros_(self.fc3.bias)  # Ensure the bias is initialized 
+            
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
