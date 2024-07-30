@@ -155,8 +155,6 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         epoch += 1
     print(f'Min validation loss: {min_val_loss}')
     return min_val_loss, best_model
-    # plot_losses(train_losses, val_losses, model_name)
-    return min_val_loss, best_model
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     '''
@@ -178,10 +176,10 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_i)
 
         train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = 4, pin_memory = False)
+            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = 16, pin_memory = True)
 
         val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = 4, pin_memory = False)
+            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = 16, pin_memory = True)
 
         model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
         
