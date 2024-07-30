@@ -21,6 +21,7 @@ import os
 import json
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Adjust this as needed
+os.environ["CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"] = "50"
 
 torch.manual_seed(99)
 
@@ -130,8 +131,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
 
         if avg_val_loss < min_val_loss:
             min_val_loss = avg_val_loss
-            # print(f'Saving model for lower avg min validation loss: {min_val_loss}')
-            # save_checkpoint(epoch, model, model_name, optimizer, model_folder_path, fold)
+            best_model = model.state_dict()
             early_stop_counter = 0
         
         early_stop_counter += 1
@@ -140,7 +140,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         #     plot_losses(train_losses, val_losses, model_name)
     print(f'Min validation loss: {min_val_loss}')
     # plot_losses(train_losses, val_losses, model_name)
-    return min_val_loss
+    return min_val_loss, best_model
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     '''
@@ -154,6 +154,9 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     _, targets = dataset[:]
     output_bias = torch.mean(targets)
 
+    best_model = None
+    best_loss = np.inf
+
     for fold, (train_i, val_i) in enumerate(kfold.split(dataset)):
         print(f'Fold {fold}--------------------------------')
         # reset_weights(model)
@@ -161,10 +164,10 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_i)
 
         train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = 16, pin_memory = True)
+            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = 4, pin_memory = False)
 
         val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = 16, pin_memory = True)
+            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = 4, pin_memory = False)
 
         model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
         
@@ -175,9 +178,14 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
         early_stop = 500
         decay_lr_at = []
 
-        val_loss = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, decay_lr_at, start_epoch, model_folder_path, model_name, fold)
+        val_loss, model_state = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, decay_lr_at, start_epoch, model_folder_path, model_name, fold)
         val_losses.append(val_loss)
 
+        if val_loss < best_loss:
+            best_loss = val_loss
+            best_model = model_state  # Update best model
+
+    torch.save(best_model, Path(model_folder_path) / 'best_model.pth')  # Save the best model state
     mean_val_loss = np.mean(val_losses)
     session.report({"mean_val_loss": mean_val_loss})
 
@@ -237,7 +245,7 @@ def main():
         tune.with_resources(
             tune.with_parameters(train_k_fold, dataset=k_fold_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path),
-            resources = {"cpu": 32, "gpu": 1},
+            resources = {"cpu": 12, "gpu": 0},
         ),
         param_space=config,
         tune_config=tune.TuneConfig(

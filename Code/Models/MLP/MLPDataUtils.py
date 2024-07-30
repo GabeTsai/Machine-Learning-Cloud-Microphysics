@@ -69,7 +69,7 @@ def create_MLP_dataset(data_folder_path, model_folder_path, include_qr_nr):
 def main():
     model_name = 'MLP2'
     inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', f'../../../SavedModels/{model_name}', False)
-    histogram(targets, targets, model_name)
+    histogram(targets, targets, model_name, '../../../Visualizations')
 
 if __name__ == "__main__":
     main()
