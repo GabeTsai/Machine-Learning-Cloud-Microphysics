@@ -174,7 +174,6 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     input, target = dataset[0]
     _, targets = dataset[:]
     output_bias = torch.mean(targets)
-    best_loss = np.inf
     best_model = None
 
     model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
@@ -185,10 +184,10 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
     train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), num_workers = 16, pin_memory = True)
+            train_dataset, batch_size= int(config["batch_size"]), num_workers = 16, pin_memory = True)
 
     val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), num_workers = 16, pin_memory = True)
+            val_dataset, batch_size = int(config["batch_size"]), num_workers = 16, pin_memory = True)
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
@@ -207,8 +206,7 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     }
     save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model state
-    mean_val_loss = np.mean(val_losses)
-    session.report({"mean_val_loss": mean_val_loss})
+    session.report({"best_val_loss": val_loss})
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     '''
