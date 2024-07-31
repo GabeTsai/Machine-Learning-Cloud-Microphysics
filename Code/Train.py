@@ -174,7 +174,6 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     input, target = dataset[0]
     _, targets = dataset[:]
     output_bias = torch.mean(targets)
-    best_loss = np.inf
     best_model = None
 
     model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
@@ -185,10 +184,10 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
     train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), num_workers = 16, pin_memory = True)
+            train_dataset, batch_size= int(config["batch_size"]), num_workers = 16, pin_memory = True)
 
     val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), num_workers = 16, pin_memory = True)
+            val_dataset, batch_size = int(config["batch_size"]), num_workers = 16, pin_memory = True)
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
@@ -207,8 +206,7 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     }
     save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model state
-    mean_val_loss = np.mean(val_losses)
-    session.report({"mean_val_loss": mean_val_loss})
+    session.report({"best_val_loss": val_loss})
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     '''
@@ -263,11 +261,11 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
 
 def test_best_config(test_dataset, model_name, model_file_name, model_folder_path):
     input, target = test_dataset[0]
-    model_data = torch.load(Path(model_folder_path) / f'{model_file_name}')
+    model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
     checkpoint = model_data['model_state_dict']
-    if 'fc3.bias' in checkpoint: 
-        if checkpoint['fc3.bias'].shape == torch.Size([]):
-            checkpoint['fc3.bias'] = checkpoint['fc3.bias'].unsqueeze(0) 
+    # if 'fc3.bias' in checkpoint: 
+    #     if checkpoint['fc3.bias'].shape == torch.Size([]):
+    #         checkpoint['fc3.bias'] = checkpoint['fc3.bias'].unsqueeze(0) 
     model = choose_model(model_name, input.shape, target.shape, torch.zeros(1), model_data['config']).to(device)
     model.load_state_dict(checkpoint)
     model.eval()
@@ -278,7 +276,8 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
         inputs, targets = inputs.to(device), targets.to(device)
         outputs = model(inputs)
         test_loss = criterion(outputs, targets)
-
+    print(outputs.shape)
+    print(targets.shape)
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
@@ -292,69 +291,70 @@ def main():
     model_name = 'LSTM' 
     model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
     
-    max_num_epochs = 200
+    # max_num_epochs = 200
     
-    input_data, target_data = load_data(data_folder_path, model_folder_path, model_name)
+    # input_data, target_data = load_data(data_folder_path, model_folder_path, model_name)
 
-    dataset = torch.utils.data.TensorDataset(input_data, target_data)
+    # dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
-    test_percentage = 0.1 # 10% of data used for testing
-    test_size = int(len(input_data) * test_percentage)
-    k_fold_train_size = len(input_data) - test_size
+    # test_percentage = 0.1 # 10% of data used for testing
+    # test_size = int(len(input_data) * test_percentage)
+    # k_fold_train_size = len(input_data) - test_size
 
-    train_val_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
+    # train_val_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
     
-    torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
+    # torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
 
-    config = define_hyperparameter_search_space(model_name, device)
+    # config = define_hyperparameter_search_space(model_name, device)
     
-    scheduler = ASHAScheduler(
-        metric = "mean_val_loss",
-        mode = "min", 
-        max_t = max_num_epochs,
-        grace_period = 1,
-        reduction_factor = 2
-    )
+    # scheduler = ASHAScheduler(
+    #     metric = "mean_val_loss",
+    #     mode = "min", 
+    #     max_t = max_num_epochs,
+    #     grace_period = 1,
+    #     reduction_factor = 2
+    # )
 
-    tuner = tune.Tuner(
-        tune.with_resources(
-            tune.with_parameters(train_func, dataset=train_val_dataset,
-                                 model_name=model_name, model_folder_path=model_folder_path),
-            resources = {"cpu": 8, "gpu": 0.25},
-        ),
-        param_space=config,
-        tune_config=tune.TuneConfig(
-            scheduler=scheduler,
-            num_samples=10,
-            max_concurrent_trials=4  
-        ), 
-        run_config=ray.air.config.RunConfig(
-            name = "tune_k_fold",
-            verbose=1
-        )
-    )
+    # tuner = tune.Tuner(
+    #     tune.with_resources(
+    #         tune.with_parameters(train_func, dataset=train_val_dataset,
+    #                              model_name=model_name, model_folder_path=model_folder_path),
+    #         resources = {"cpu": 8, "gpu": 0.25},
+    #     ),
+    #     param_space=config,
+    #     tune_config=tune.TuneConfig(
+    #         scheduler=scheduler,
+    #         num_samples=10,
+    #         max_concurrent_trials=4  
+    #     ), 
+    #     run_config=ray.air.config.RunConfig(
+    #         name = "tune_k_fold",
+    #         verbose=1
+    #     )
+    # )
 
-    # Run the tuning
-    results = tuner.fit()
-    best_result = results.get_best_result(metric="mean_val_loss", mode="min")
-    best_config = best_result.config
-    best_metrics = best_result.metrics
-    print("Best hyperparameters found were: ", best_config)
-    print("Best validation loss found was: ", best_metrics['mean_val_loss'])
+    # # Run the tuning
+    # results = tuner.fit()
+    # best_result = results.get_best_result(metric="mean_val_loss", mode="min")
+    # best_config = best_result.config
+    # best_metrics = best_result.metrics
+    # print("Best hyperparameters found were: ", best_config)
+    # print("Best validation loss found was: ", best_metrics['mean_val_loss'])
 
-    with open(f'{model_folder_path}/best_config.txt', 'w') as f:
-        f.write(f"Best hyperparameters: {best_config}\n")
-        f.write(f"Best validation loss: {best_metrics['mean_val_loss']}\n")
+    # with open(f'{model_folder_path}/best_config.txt', 'w') as f:
+    #     f.write(f"Best hyperparameters: {best_config}\n")
+    #     f.write(f"Best validation loss: {best_metrics['mean_val_loss']}\n")
 
-    best_settings_map = {
-        "config": best_config,
-        "loss": best_metrics['mean_val_loss']
-    }
-    with open (f'{model_folder_path}/best_config_{model_name}.json', 'w') as f:
-        json.dump(best_settings_map, f)
-    # test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
-    # model_file_name = 'best_model_MLP2hl164hl232lr0.00047062799189482777weight_decay2.8594198351051737e-06batch_size128max_epochs200.pth'
-    # test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
+    # best_settings_map = {
+    #     "config": best_config,
+    #     "loss": best_metrics['mean_val_loss']
+    # }
+    # with open (f'{model_folder_path}/best_config_{model_name}.json', 'w') as f:
+    #     json.dump(best_settings_map, f)
+
+    test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth',  map_location=torch.device('cpu'))
+    model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/LSTM/best_model_LSTMhidden_dim64num_layers2lr0.00019361424297303123weight_decay2.450336447031607e-06batch_size256max_epochs500.pth'
+    test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
     
 if __name__ == '__main__':
     main()
