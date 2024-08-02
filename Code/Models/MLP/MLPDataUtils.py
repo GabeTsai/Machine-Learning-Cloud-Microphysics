@@ -5,7 +5,7 @@ import numpy as np
 import json
 import sys
 sys.path.append('../../')
-from CreateDataLists import * # Import functions and variables from CreateDataLists.py
+from DataUtils import * # Import functions and variables from CreateDataLists.py
 from Visualizations import histogram
 
 from pathlib import Path

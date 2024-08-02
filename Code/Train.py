@@ -8,7 +8,7 @@ from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.MLP.MLPModel import MLP
 from Models.CNNs.CNNDataUtils import create_CNN_dataset
 from Models.MLP.MLPDataUtils import create_MLP_dataset
-from Models.LSTM.LSTMDataUtils import create_LSTM_dataset
+from Models.LSTM.LSTMDataUtils import *
 from Models.LSTM.LSTMModel import LSTM
 from Visualizations import plot_losses
 from sklearn.model_selection import KFold
@@ -23,7 +23,6 @@ import json
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Adjust this as needed
-os.environ["CUDA_MPS_ACTIVE_THREAD_PERCENTAGE"] = "50"
 
 torch.manual_seed(99)
 
@@ -99,14 +98,28 @@ def define_hyperparameter_search_space(model_name, device):
 
 def load_data(data_folder_path, model_folder_path, model_name):
     '''
-    Load data from data folder path
+    Load data for specific type of model from data folder path
     '''
+    def create_MLP_dataset_wrapper():
+        return create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_qr_nr=False), None
 
-    if model_name == 'MLP2':
-        input_data, target_data = create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_qr_nr = False)
-    elif model_name == 'LSTM':
-        input_data, target_data = create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
-    return input_data, target_data
+    def create_LSTM_dataset_wrapper():
+        return create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
+
+    model_data_loaders = {
+        'MLP2': create_MLP_dataset_wrapper,
+        'LSTM': create_LSTM_dataset_wrapper
+    }
+
+    if model_name not in model_data_loaders:
+        raise ValueError(f"Unsupported model_name: {model_name}")
+
+    data = model_data_loaders[model_name]()
+
+    if data[1] is None:
+        return data[0]  # Only input_data and target_data for models like MLP2
+    else:
+        return data  # input_data, target_data, and length_data for models like LSTM
 
 def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name):
     '''
@@ -167,13 +180,119 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     print(f'Min validation loss: {min_val_loss}')
     return min_val_loss, best_model
 
-def train_single_split(config, dataset, model_name, model_folder_path):
+def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name):
+    '''
+    Train the model on a single train/test/val split until validation loss has not reached a new minimum in early_stop epochs.
+
+    :param model: model to train
+    :param criterion: loss function
+    :param optimizer: optimizer
+    :param train_loader: DataLoader for training data
+    :param val_loader: DataLoader for validation data
+    :param early_stop: number of epochs to stop if no improvement
+    :param max_num_epochs: maximum number of epochs to train
+    :param decay_lr_at: list of epochs to decay learning rate
+    :param start_epoch: starting epoch
+    :param model_folder_path: folder to save model
+    :param model_name: name of model
+    :param is_lstm: boolean flag indicating if the model is an LSTM
+    '''
+
+    def train_epoch_lstm():
+        model.train()
+        epoch_loss = 0.0
+        for inputs, targets, lengths in train_loader:
+            inputs, targets, lengths = inputs.to(device), targets.to(device), lengths.cpu()
+            optimizer.zero_grad()
+            outputs = model(inputs, lengths)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+        return epoch_loss / len(train_loader)
+
+    def train_epoch_default():
+        model.train()
+        epoch_loss = 0.0
+        for inputs, targets in train_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+        return epoch_loss / len(train_loader)
+
+    def validate_epoch_lstm():
+        model.eval()
+        val_epoch_loss = 0.0
+        with torch.no_grad():
+            for inputs, targets, lengths in val_loader:
+                inputs, targets, lengths = inputs.to(device), targets.to(device), lengths.cpu()
+                outputs = model(inputs, lengths)
+                loss = criterion(outputs, targets)
+                val_epoch_loss += loss.item()
+        return val_epoch_loss / len(val_loader)
+
+    def validate_epoch_default():
+        model.eval()
+        val_epoch_loss = 0.0
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                val_epoch_loss += loss.item()
+        return val_epoch_loss / len(val_loader)
+
+    # Choose the appropriate functions
+    train_epoch = train_epoch_lstm if 'LSTM' in model_name else train_epoch_default
+    validate_epoch = validate_epoch_lstm if 'LSTM' in model_name else validate_epoch_default
+
+    train_losses = []
+    val_losses = []
+    min_val_loss = np.inf
+    best_model = None
+    epoch = start_epoch
+    early_stop_counter = 0
+
+    while early_stop_counter < early_stop and epoch < max_num_epochs:
+        if epoch in decay_lr_at:
+            decay_lr(optimizer, 0.1)
+
+        avg_train_loss = train_epoch()
+        train_losses.append(avg_train_loss)
+
+        avg_val_loss = validate_epoch()
+        val_losses.append(avg_val_loss)
+
+        print(f'Epoch {epoch} || training loss: {avg_train_loss} || validation loss: {avg_val_loss}')
+
+        if avg_val_loss < min_val_loss:
+            min_val_loss = avg_val_loss
+            best_model = model.state_dict()
+            early_stop_counter = 0
+        else:
+            early_stop_counter += 1
+
+        epoch += 1
+
+    print(f'Min validation loss: {min_val_loss}')
+    return min_val_loss, best_model
+
+def train_single_split(config, dataset, model_name, model_folder_path, num_workers, collate_fn=None):
     '''
     Train on a single train-valid split (provided dataset is big enough)
     '''
-    input, target = dataset[0]
-    _, targets = dataset[:]
-    output_bias = torch.mean(targets)
+    if 'MLP' in model_name:
+        input, target = dataset[0]
+        _, targets = dataset[:]
+        output_bias = torch.mean(targets)
+    elif 'LSTM' in model_name:
+        input, target, _ = dataset[0]
+        _, targets, _ = zip(*dataset)
+        output_bias = torch.mean(torch.tensor(targets))
     best_model = None
 
     model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
@@ -184,10 +303,10 @@ def train_single_split(config, dataset, model_name, model_folder_path):
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
     train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size= int(config["batch_size"]), num_workers = 16, pin_memory = True)
+            train_dataset, batch_size= int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
     val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size = int(config["batch_size"]), num_workers = 16, pin_memory = True)
+            val_dataset, batch_size = int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
@@ -259,6 +378,15 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     mean_val_loss = np.mean(val_losses)
     session.report({"mean_val_loss": mean_val_loss})
 
+def configure_bias(checkpoint):
+    last_layer_bias_key = None
+    for layer in checkpoint.keys():
+        if 'fc' in layer and 'bias' in layer:
+            last_layer_bias_key = layer
+    checkpoint[last_layer_bias_key] = checkpoint[last_layer_bias_key].unsqueeze(0)
+
+    return checkpoint
+
 def test_best_config(test_dataset, model_name, model_file_name, model_folder_path):
     input, target = test_dataset[0]
     model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
@@ -281,6 +409,37 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
+def create_datasets(data_folder_path, model_folder_path, model_name):
+    """
+    Returns train/val dataset and saves test dataset as .pth file depending on model. 
+    """
+    data = load_data(data_folder_path, model_folder_path, model_name)
+    if model_name == 'LSTM': 
+        seqs, target_data, length_data = data
+        test_seqs, test_target_data, test_len_data = create_LSTM_test_data(seqs, target_data, length_data)
+        eq_inputs, eq_targets = seq_to_single(test_seqs, test_target_data)
+        eq_test_dataset = torch.utils.data.TensorDataset(eq_inputs, eq_targets) 
+
+        torch.save(eq_test_dataset, Path(model_folder_path)/ f'{model_name}_eq_test_dataset.pth')
+
+        train_val_dataset = VariableSeqLenDataset(seqs, target_data, length_data)
+        test_dataset = VariableSeqLenDataset(test_seqs, test_target_data, test_len_data)
+
+        torch.save(eq_test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
+
+    elif 'MLP' in model_name:
+        input_data, target_data = data
+        dataset = torch.utils.data.TensorDataset(input_data, target_data)
+
+        test_percentage = 0.1 # 10% of data used for testing
+        test_size = int(len(input_data) * test_percentage)
+        k_fold_train_size = len(input_data) - test_size
+
+        train_val_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
+        
+        torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
+    return train_val_dataset
+
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
@@ -291,70 +450,63 @@ def main():
     model_name = 'LSTM' 
     model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
     
-    # max_num_epochs = 200
+    cpus = os.cpu_count()
+    sim_trials = 4
+    num_workers = int(cpus/4)
+
+    max_num_epochs = 200
+    train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)
+    config = define_hyperparameter_search_space(model_name, device)
     
-    # input_data, target_data = load_data(data_folder_path, model_folder_path, model_name)
+    scheduler = ASHAScheduler(
+        metric = "mean_val_loss",
+        mode = "min", 
+        max_t = max_num_epochs,
+        grace_period = 1,
+        reduction_factor = 2
+    )
 
-    # dataset = torch.utils.data.TensorDataset(input_data, target_data)
+    tuner = tune.Tuner(
+        tune.with_resources(
+            tune.with_parameters(train_func, dataset=train_val_dataset,
+                                 model_name=model_name, model_folder_path=model_folder_path, 
+                                 num_workers = num_workers, collate_fn = collate_fn),
+            resources = {"cpu": num_workers, "gpu": 0.25},
+        ),
+        param_space=config,
+        tune_config=tune.TuneConfig(
+            scheduler=scheduler,
+            num_samples=10,
+            max_concurrent_trials=4  
+        ), 
+        run_config=ray.air.config.RunConfig(
+            name = "tune_k_fold",
+            verbose=1
+        )
+    )
 
-    # test_percentage = 0.1 # 10% of data used for testing
-    # test_size = int(len(input_data) * test_percentage)
-    # k_fold_train_size = len(input_data) - test_size
+    # Run the tuning
+    results = tuner.fit()
+    best_result = results.get_best_result(metric="mean_val_loss", mode="min")
+    best_config = best_result.config
+    best_metrics = best_result.metrics
+    print("Best hyperparameters found were: ", best_config)
+    print("Best validation loss found was: ", best_metrics['mean_val_loss'])
 
-    # train_val_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
-    
-    # torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
+    with open(f'{model_folder_path}/best_config.txt', 'w') as f:
+        f.write(f"Best hyperparameters: {best_config}\n")
+        f.write(f"Best validation loss: {best_metrics['mean_val_loss']}\n")
 
-    # config = define_hyperparameter_search_space(model_name, device)
-    
-    # scheduler = ASHAScheduler(
-    #     metric = "mean_val_loss",
-    #     mode = "min", 
-    #     max_t = max_num_epochs,
-    #     grace_period = 1,
-    #     reduction_factor = 2
-    # )
+    best_settings_map = {
+        "config": best_config,
+        "loss": best_metrics['mean_val_loss']
+    }
+    with open (f'{model_folder_path}/best_config_{model_name}.json', 'w') as f:
+        json.dump(best_settings_map, f)
 
-    # tuner = tune.Tuner(
-    #     tune.with_resources(
-    #         tune.with_parameters(train_func, dataset=train_val_dataset,
-    #                              model_name=model_name, model_folder_path=model_folder_path),
-    #         resources = {"cpu": 8, "gpu": 0.25},
-    #     ),
-    #     param_space=config,
-    #     tune_config=tune.TuneConfig(
-    #         scheduler=scheduler,
-    #         num_samples=10,
-    #         max_concurrent_trials=4  
-    #     ), 
-    #     run_config=ray.air.config.RunConfig(
-    #         name = "tune_k_fold",
-    #         verbose=1
-    #     )
-    # )
-
-    # # Run the tuning
-    # results = tuner.fit()
-    # best_result = results.get_best_result(metric="mean_val_loss", mode="min")
-    # best_config = best_result.config
-    # best_metrics = best_result.metrics
-    # print("Best hyperparameters found were: ", best_config)
-    # print("Best validation loss found was: ", best_metrics['mean_val_loss'])
-
-    # with open(f'{model_folder_path}/best_config.txt', 'w') as f:
-    #     f.write(f"Best hyperparameters: {best_config}\n")
-    #     f.write(f"Best validation loss: {best_metrics['mean_val_loss']}\n")
-
-    # best_settings_map = {
-    #     "config": best_config,
-    #     "loss": best_metrics['mean_val_loss']
-    # }
-    # with open (f'{model_folder_path}/best_config_{model_name}.json', 'w') as f:
-    #     json.dump(best_settings_map, f)
-
-    test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth',  map_location=torch.device('cpu'))
-    model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/LSTM/best_model_LSTMhidden_dim64num_layers2lr0.00019361424297303123weight_decay2.450336447031607e-06batch_size256max_epochs500.pth'
-    test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
+    # test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth',  map_location=torch.device('cpu'))
+    # model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/LSTM/best_model_LSTMhidden_dim64num_layers2lr0.00019361424297303123weight_decay2.450336447031607e-06batch_size256max_epochs500.pth'
+    # test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
     
 if __name__ == '__main__':
     main()

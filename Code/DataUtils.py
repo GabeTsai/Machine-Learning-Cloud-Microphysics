@@ -7,7 +7,7 @@ import json
 #Open file, initialize data arrays
 var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud', 'qr_autoconv_cloud', 'nr_autoconv_cloud', 'auto_cldmsink_b_cloud']
 
-THRESHOLD_VALUES = 0.62 * 721
+THRESHOLD_VALUES = 0.75 * 721
 THRESHOLD = 1e-6
 
 def remove_outliers(arr): 
@@ -21,20 +21,18 @@ def remove_outliers(arr):
     upper_bound = q3 + 1.5 * iqr
     return (arr > lower_bound) & (arr < upper_bound)
 
-def min_max_normalize(data, model_name = '000'):
+def min_max_normalize(data, dims = None):
     '''
     Normalize data to range [0, 1], feature-specific or global. Ignore zeros.
     '''
     non_zero_mask = data != 0    
     masked_data = np.ma.masked_array(data, mask=~non_zero_mask)
 
-    if 'MLP' in model_name:
-        min_vals = np.min(masked_data, axis=(0), keepdims=True)
-        max_vals = np.max(masked_data, axis=(0), keepdims=True)
-    elif 'LSTM' in model_name:
-        min_vals = np.min(masked_data, axis = (0, 2), keepdims = True) #normalize features over all batches/seqs
-        max_vals = np.max(masked_data, axis=(0, 2), keepdims=True)
-    else: #otherwise, use the global values
+    if dims != None:
+        axes = dims
+        min_vals = np.min(masked_data, axis = axes, keepdims = True) #normalize features over all batches/seqs
+        max_vals = np.max(masked_data, axis= axes, keepdims=True)
+    else:
         min_vals = np.min(masked_data)
         max_vals = np.max(masked_data)
 
@@ -119,18 +117,14 @@ def save_data_info(inputs, targets, model_folder_path, model_name):
     target_data_map['min'] = np.min(masked_targets)
     target_data_map['max'] = np.max(masked_targets)
     
-    if 'LSTM' in model_name:
-        input_data_map['qc'] = {'min': np.min(inputs[:, :, 0]), 'max': np.max(inputs[:, :, 0])}
-        input_data_map['nc'] = {'min': np.min(inputs[:, :, 1]), 'max': np.max(inputs[:, :, 1])}
-    else:
-        qc = inputs[:, 0]
-        nc = inputs[:, 1]
-        qc_nonzero_mask = qc != 0
-        masked_qc = qc[qc_nonzero_mask]
-        nc_nonzero_mask = nc != 0
-        masked_nc = nc[nc_nonzero_mask]
-        input_data_map['qc'] = {'min': np.min(masked_qc), 'max': np.max(masked_qc)}
-        input_data_map['nc'] = {'min': np.min(masked_nc), 'max': np.max(masked_nc)}
+    qc = inputs[:, 0]
+    nc = inputs[:, 1]
+    qc_nonzero_mask = qc != 0
+    masked_qc = qc[qc_nonzero_mask]
+    nc_nonzero_mask = nc != 0
+    masked_nc = nc[nc_nonzero_mask]
+    input_data_map['qc'] = {'min': np.min(masked_qc), 'max': np.max(masked_qc)}
+    input_data_map['nc'] = {'min': np.min(masked_nc), 'max': np.max(masked_nc)}
 
     with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'w') as f:
         json.dump(target_data_map, f)
