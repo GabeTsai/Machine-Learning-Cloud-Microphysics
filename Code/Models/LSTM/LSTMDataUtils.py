@@ -173,15 +173,14 @@ def create_LSTM_dataset(data_folder_path, model_folder_path, model_name):
     return inputs, targets, lengths
 
 def main():
-    # data_folder_path = '../../../Data/NetCDFFiles'
-    # model_folder_path = '../../../SavedModels/LSTM'
+    data_folder_path = '../../../Data/NetCDFFiles'
+    model_folder_path = '../../../SavedModels/LSTM'
     
-    # inputs, targets, lengths = create_LSTM_dataset(data_folder_path, model_folder_path, 'LSTM')
-    # print(len(inputs))
-    # print(targets.shape)
-    # print(lengths.shape)
+    inputs, targets, lengths = create_LSTM_dataset(data_folder_path, model_folder_path, 'LSTM')
+    print(len(inputs))
+    print(targets.shape)
+    print(lengths.shape)
     # histogram(targets, targets, 'LSTM', '../../../Visualizations')
-    test()
 
 
 if __name__ == "__main__":

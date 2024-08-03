@@ -391,9 +391,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     input, target = test_dataset[0]
     model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
     checkpoint = model_data['model_state_dict']
-    # if 'fc3.bias' in checkpoint: 
-    #     if checkpoint['fc3.bias'].shape == torch.Size([]):
-    #         checkpoint['fc3.bias'] = checkpoint['fc3.bias'].unsqueeze(0) 
+    checkpoint = configure_bias(checkpoint)
     model = choose_model(model_name, input.shape, target.shape, torch.zeros(1), model_data['config']).to(device)
     model.load_state_dict(checkpoint)
     model.eval()

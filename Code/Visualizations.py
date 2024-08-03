@@ -211,10 +211,10 @@ def denormalize_predictions(model_folder_path, model_name, predictions, true_val
     min_val = target_data_map['min']
     max_val = target_data_map['max']
     predictions = denormalize_delog(predictions, min_val, max_val)
-    true_values = denormalize_delog(predictions, min_val, max_val)
+    true_values = denormalize_delog(true_values, min_val, max_val)
     return predictions, true_values
     
-def scatter_plot(predicted_values, true_values, model_name):
+def scatter_plot(predicted_values, true_values, model_name, plot_name):
     '''
     Plot a scatter plot of the true and predicted values.
     '''
@@ -225,9 +225,9 @@ def scatter_plot(predicted_values, true_values, model_name):
     plt.title('Predicted vs True values')
     plt.xlim(0, )
     plt.ylim(0, )
-    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot.png'))
+    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot{plot_name}.png'))
 
-def density_plot(predicted_values, true_values, model_name):
+def density_plot(predicted_values, true_values, model_name, plot_name):
     white_viridis = LinearSegmentedColormap.from_list('white_viridis', [
         (0, '#ffffff'),
         (1e-20, '#440053'),
@@ -238,15 +238,18 @@ def density_plot(predicted_values, true_values, model_name):
         (1, '#fde624'),
     ], N=256)
     
+    
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
     density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis, dpi = 50)
     density.set_clim(0, 100) 
     fig.colorbar(density, label = 'Number of points per pixel') 
+    plt.xlim(0, np.max(true_values))
+    plt.ylim(0, np.max(true_values))
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
     plt.title('Predicted vs True values')
-    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot.png'))
+    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
 def histogram(predicted_values, true_values, model_name, vis_folder_path):
     '''
@@ -276,21 +279,19 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     nc_min = input_data_map['nc']['min']
     nc_max = input_data_map['nc']['max']
 
-    qc = inputs[:, 0]
-    nc = inputs[:, 1]
+    qc = np.array(inputs[:, 0])
+    nc = np.array(inputs[:, 1])
 
-    qc = min_max_denormalize(qc, qc_min, qc_max)
-    nc = min_max_denormalize(nc, nc_min, nc_max)
-
+    qc = np.exp(min_max_denormalize(qc, qc_min, qc_max))
+    nc = np.exp(min_max_denormalize(nc, nc_min, nc_max))
+    
     eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
-   
     criterion = nn.MSELoss()
-    print(np.mean(true_values))
     print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
     print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
 
     # histogram(predictions, true_values, model_name, f'../Visualizations')
-    scatter_plot(eq_autoconv_rate, true_values, model_name)
+    density_plot(eq_autoconv_rate, true_values, model_name, 'KK2000')
 
 def main():
     from Train import choose_model, test_best_config
@@ -300,7 +301,7 @@ def main():
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
     data_file = 'ena25jan2023.nc'
-    model_file_name = 'best_model_MLP2hl164hl232lr0.00047062799189482777weight_decay2.8594198351051737e-06batch_size128max_epochs200.pth'
+    model_file_name = 'best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
     denorm_log_pred = True
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
@@ -308,8 +309,7 @@ def main():
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
     if denorm_log_pred:
         predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset)
-    scatter_plot(predictions, true_values, model_name)
-    density_plot(predictions, true_values, model_name)
+    density_plot(predictions, true_values, model_name, '')
     compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
 
     
