@@ -14,11 +14,12 @@ from Visualizations import plot_losses
 from sklearn.model_selection import KFold
 import pandas as pd
 import ray
-from ray import tune
+from ray import tune, train
 from ray.tune.schedulers import ASHAScheduler
 from ray.air import session
 import os
 import json
+import wandb
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -59,7 +60,7 @@ def choose_model(model_name, input_dim, target_dim, output_bias, config):
     '''
     Choose model based on model name
     '''
-    if model_name == 'MLP2':
+    if 'MLP' in model_name:
         return MLP(input_dim[0], output_bias, config["hl1"], config["hl2"])
     elif model_name == 'LSTM':
         return LSTM(input_dim[1], config["hidden_dim"], config["num_layers"], output_bias) #inputs: (max_seq_len, num_features)
@@ -71,7 +72,7 @@ def define_hyperparameter_search_space(model_name, device):
     Define hyperparameter search space. Adjust as necessary.
     '''
     
-    if model_name == 'MLP2':
+    if 'MLP' in model_name:
         if str(device) == 'cuda':
             batch_size_list = [128,256,512,1024]
         else:
@@ -82,7 +83,7 @@ def define_hyperparameter_search_space(model_name, device):
         "lr": tune.loguniform(1e-5, 1e-3),
         "weight_decay": tune.loguniform(1e-6, 1e-4),
         "batch_size": tune.choice(batch_size_list),
-        "max_epochs": 300
+        "max_epochs": 1000
         }
     elif model_name == 'LSTM': 
         return {
@@ -101,13 +102,14 @@ def load_data(data_folder_path, model_folder_path, model_name):
     Load data for specific type of model from data folder path
     '''
     def create_MLP_dataset_wrapper():
-        return create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_qr_nr=False), None
+        return create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_qr_nr=False)
 
     def create_LSTM_dataset_wrapper():
         return create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
 
     model_data_loaders = {
         'MLP2': create_MLP_dataset_wrapper,
+        'MLP3': create_MLP_dataset_wrapper,
         'LSTM': create_LSTM_dataset_wrapper
     }
 
@@ -120,65 +122,6 @@ def load_data(data_folder_path, model_folder_path, model_name):
         return data[0]  # Only input_data and target_data for models like MLP2
     else:
         return data  # input_data, target_data, and length_data for models like LSTM
-
-def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name):
-    '''
-    Train the model on a single train/test/val split until validation loss has not reached a new minimum in early_stop epochs.
-
-    :param model: model to train
-    :param criterion: loss function
-    :param optimizer: optimizer
-    :param dataset: tensor dataset
-    :param batch_size: batch size
-    :param epochs: number of epochs to train on
-    :param model_folder_path: folder to save model
-    :param model_name: name of model
-    '''
-
-    train_losses = []
-    val_losses = []
-    min_val_loss = np.inf
-    best_model = None
-    epoch = start_epoch
-    early_stop_counter = 0
-    while early_stop_counter < early_stop and epoch < max_num_epochs:
-        model.train()
-
-        if epoch in decay_lr_at:
-            decay_lr(optimizer, 0.1)
-
-        epoch_loss = 0.0
-        for inputs, targets in train_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        avg_train_loss = epoch_loss / len(train_loader)
-        train_losses.append(avg_train_loss)
-
-        val_epoch_loss = 0.0
-        with torch.no_grad():
-            for inputs, targets in val_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                val_epoch_loss += loss.item()
-        avg_val_loss = val_epoch_loss / len(val_loader)
-        val_losses.append(avg_val_loss)
-        print(f'Epoch {epoch} || training loss: {avg_train_loss} || validation loss: {avg_val_loss}')
-
-        if avg_val_loss < min_val_loss:
-            min_val_loss = avg_val_loss
-            best_model = model.state_dict()
-            early_stop_counter = 0
-        
-        early_stop_counter += 1
-        epoch += 1
-    print(f'Min validation loss: {min_val_loss}')
-    return min_val_loss, best_model
 
 def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name):
     '''
@@ -283,7 +226,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
 
 def train_single_split(config, dataset, model_name, model_folder_path, num_workers, collate_fn=None):
     '''
-    Train on a single train-valid split (provided dataset is big enough)
+    Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config.
     '''
     if 'MLP' in model_name:
         input, target = dataset[0]
@@ -325,9 +268,9 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     }
     save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model state
-    session.report({"best_val_loss": val_loss})
+    session.report({"mean_val_loss": val_loss})
 
-def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
+def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, num_folds = 5):
     '''
     Train model using k-fold cross validation for a particular hyperparameter configuration.
     '''
@@ -347,10 +290,10 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_i)
 
         train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = 16, pin_memory = True)
+            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = num_workers, pin_memory = True)
 
         val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = 16, pin_memory = True)
+            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = num_workers, pin_memory = True)
 
         model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
         
@@ -379,6 +322,10 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_folds = 5):
     session.report({"mean_val_loss": mean_val_loss})
 
 def configure_bias(checkpoint):
+    '''
+    Adds extra dimension to output bias of saved model checkpoint. Workaround.
+    PyTorch copies the bias as a scalar tensor but we feed in a tensor of dim ([1]) 
+    '''
     last_layer_bias_key = None
     for layer in checkpoint.keys():
         if 'fc' in layer and 'bias' in layer:
@@ -388,6 +335,18 @@ def configure_bias(checkpoint):
     return checkpoint
 
 def test_best_config(test_dataset, model_name, model_file_name, model_folder_path):
+    '''
+    Test the best model configuration on a given test dataset and compute the loss.
+
+    This function loads a pre-trained model from a specified file, configures it,
+    and evaluates its performance on the provided test dataset using Mean Squared Error (MSE) loss.
+
+    :param test_dataset: A dataset object that provides test data. It should return tuples of (input, target).
+    :param model_name: The name of the model architecture to use. This should match one of the options in `choose_model`.
+    :param model_file_name: The filename of the pre-trained model checkpoint to load.
+    :param model_folder_path: The directory path where the model checkpoint file is located.
+    :return: A tuple containing the test loss, the model outputs, and the target values.
+    '''
     input, target = test_dataset[0]
     model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
     checkpoint = model_data['model_state_dict']
@@ -441,11 +400,11 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
-    single_split = True
+    single_split = False
     train_func = train_k_fold
     if single_split: 
         train_func = train_single_split
-    model_name = 'LSTM' 
+    model_name = 'MLP3' 
     model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
     
     cpus = os.cpu_count()
@@ -468,7 +427,7 @@ def main():
         tune.with_resources(
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
-                                 num_workers = num_workers, collate_fn = collate_fn),
+                                 num_workers = num_workers),
             resources = {"cpu": num_workers, "gpu": 0.25},
         ),
         param_space=config,

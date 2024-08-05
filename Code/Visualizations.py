@@ -223,8 +223,8 @@ def scatter_plot(predicted_values, true_values, model_name, plot_name):
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
     plt.title('Predicted vs True values')
-    plt.xlim(0, )
-    plt.ylim(0, )
+    plt.xlim(0, np.max(true_values))
+    plt.ylim(0, np.max(true_values))
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot{plot_name}.png'))
 
 def density_plot(predicted_values, true_values, model_name, plot_name):
@@ -241,29 +241,32 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
-    density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis, dpi = 50)
-    density.set_clim(0, 100) 
+    density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis)
+    density.set_clim(0, 50) 
     fig.colorbar(density, label = 'Number of points per pixel') 
-    plt.xlim(0, np.max(true_values))
-    plt.ylim(0, np.max(true_values))
+    max_value = np.max(true_values)
+    plt.xlim(0, max_value)
+    plt.ylim(0, max_value)
+    
+    plt.plot([0, max_value], [0, max_value], linestyle='dashed', color='black')
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
     plt.title('Predicted vs True values')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
-def histogram(predicted_values, true_values, model_name, vis_folder_path):
+def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_path):
     '''
     Plot a histogram of the true and predicted values.
     '''
     plt.clf()
-    plt.hist(predicted_values, bins = 200, alpha = 0.5, label = 'Predicted values')
-    plt.hist(true_values, bins = 200, alpha = 0.5, label = 'True values')
+    plt.hist(predicted_values, bins = 100, alpha = 0.5, label = 'Predicted values')
+    plt.hist(true_values, bins = 100, alpha = 0.5, label = 'True values')
     plt.xlabel('auto_cldmsink_b_cloud (kg/kg/s)')
     plt.ylabel('Frequency')
-    plt.title('Histogram of Predicted and True values')
+    plt.title(f'{plot_name}')
     plt.legend()
     plt.show()
-    plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram.png'))
+    plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
 
 def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     '''
@@ -286,22 +289,26 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     nc = np.exp(min_max_denormalize(nc, nc_min, nc_max))
     
     eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
+
     criterion = nn.MSELoss()
+
     print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
     print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
 
     # histogram(predictions, true_values, model_name, f'../Visualizations')
-    density_plot(eq_autoconv_rate, true_values, model_name, 'KK2000')
+    density_plot(eq_autoconv_rate, np.squeeze(true_values), model_name, 'KK2000')
+    histogram(predictions, true_values, model_name, f'{model_name} Predictions vs True Values', f"../Visualizations")    
+    histogram(eq_autoconv_rate, true_values, model_name, 'KK2000 vs True Values', f"../Visualizations") 
 
 def main():
     from Train import choose_model, test_best_config
 
-    fold = 9
-    model_name = 'MLP2'
+    model_name = 'MLP3'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    data_file = 'ena25jan2023.nc'
-    model_file_name = 'best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth'
+    #best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth
+    #best_model_MLP3hl164hl232lr0.000324132680419563weight_decay7.0845415052502345e-06batch_size256max_epochs1000.pth
+    model_file_name = 'best_model_MLP3hl164hl232lr0.000324132680419563weight_decay7.0845415052502345e-06batch_size256max_epochs1000.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
     denorm_log_pred = True
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
@@ -310,9 +317,9 @@ def main():
     if denorm_log_pred:
         predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset)
     density_plot(predictions, true_values, model_name, '')
+    scatter_plot(predictions, true_values, model_name, '')
     compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
 
-    
     
 if __name__ == "__main__":
     main()
