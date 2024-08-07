@@ -9,6 +9,7 @@ from matplotlib.colors import LinearSegmentedColormap
 from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.CNNs.CNNDataUtils import create_CNN_dataset, min_max_denormalize
 from Models.MLP.MLPModel import MLP
+from sklearn.metrics import r2_score
 
 import xarray as xr
 from pathlib import Path
@@ -69,7 +70,8 @@ def denormalize_delog(arr, arr_min, arr_max):
     Denormalize and unlog the array
     '''
     denorm_arr = min_max_denormalize(arr, arr_min, arr_max)
-    return np.exp(denorm_arr, out=np.zeros_like(arr, dtype=np.float64), where = arr > 0)
+    # return np.exp(denorm_arr, out=np.zeros_like(arr, dtype=np.float64), where = arr > 0)
+    return denorm_arr
 
 def plot_pred_single_sample_time(true_values, predicted_values, i, time, height_map, ax):
     '''
@@ -242,15 +244,15 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
     density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis)
-    density.set_clim(0, 50) 
+    density.set_clim(0, 20) 
     fig.colorbar(density, label = 'Number of points per pixel') 
     max_value = np.max(true_values)
-    plt.xlim(0, max_value)
-    plt.ylim(0, max_value)
     
     plt.plot([0, max_value], [0, max_value], linestyle='dashed', color='black')
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
+    plt.xlim(np.min(true_values), np.max(true_values))
+    plt.ylim(np.min(true_values), np.max(true_values))
     plt.title('Predicted vs True values')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
@@ -285,15 +287,21 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     qc = np.array(inputs[:, 0])
     nc = np.array(inputs[:, 1])
 
+    
     qc = np.exp(min_max_denormalize(qc, qc_min, qc_max))
     nc = np.exp(min_max_denormalize(nc, nc_min, nc_max))
-    
-    eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
 
+    print(qc[0])
+    print(nc[0])
+
+    eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
+    eq_autoconv_rate = np.log(eq_autoconv_rate, out = np.zeros_like(eq_autoconv_rate, dtype=np.float64), where = (eq_autoconv_rate > 0))
     criterion = nn.MSELoss()
 
     print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
+    print(f'R^2 for ML model: {r2_score(predictions, true_values)}')
     print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
+    print(f'R^2 for KK2000 equation: {r2_score(eq_autoconv_rate, true_values)}')
 
     # histogram(predictions, true_values, model_name, f'../Visualizations')
     density_plot(eq_autoconv_rate, np.squeeze(true_values), model_name, 'KK2000')
