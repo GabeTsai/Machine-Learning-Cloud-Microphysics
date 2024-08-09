@@ -10,7 +10,7 @@ from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.CNNs.CNNDataUtils import create_CNN_dataset, min_max_denormalize
 from Models.MLP.MLPModel import MLP
 from sklearn.metrics import r2_score
-
+from scipy.special import gamma
 import xarray as xr
 from pathlib import Path
 import json
@@ -247,13 +247,15 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     density.set_clim(0, 20) 
     fig.colorbar(density, label = 'Number of points per pixel') 
     max_value = np.max(true_values)
-    
-    plt.plot([0, max_value], [0, max_value], linestyle='dashed', color='black')
-    plt.xlabel('Predicted values')
-    plt.ylabel('True values')
+
+    true_min = np.min(true_values)
+    true_max = np.max(true_values)
+    plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
+    plt.xlabel(r'Predicted Log Autoconversion ($kg kg^{-1} s^{-1}$)')
+    plt.ylabel(r'True Log Autoconversion ($kg kg^{-1} s^{-1}$)')
     plt.xlim(np.min(true_values), np.max(true_values))
     plt.ylim(np.min(true_values), np.max(true_values))
-    plt.title('Predicted vs True values')
+    plt.title('Predicted vs True Autoconversion')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
 def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_path):
@@ -291,13 +293,19 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     qc = np.exp(min_max_denormalize(qc, qc_min, qc_max))
     nc = np.exp(min_max_denormalize(nc, nc_min, nc_max))
 
-    print(qc[0])
-    print(nc[0])
-
     eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
-    eq_autoconv_rate = np.log(eq_autoconv_rate, out = np.zeros_like(eq_autoconv_rate, dtype=np.float64), where = (eq_autoconv_rate > 0))
-    criterion = nn.MSELoss()
+    
+    #compute inverse relative variance of qc
+    inv_v_qc = np.power(qc, 2)/np.var(qc)
 
+    #multiply KK2000 Equation by enhancement factor according to Morrison & Gettelman, 2008
+    enhancement_factor = gamma(inv_v_qc + 2.47)/(gamma(inv_v_qc) * np.power(inv_v_qc, 2.47))
+    eq_autoconv_rate = enhancement_factor * eq_autoconv_rate
+
+    eq_autoconv_rate = np.log(eq_autoconv_rate, out = np.zeros_like(eq_autoconv_rate, dtype=np.float64), where = (eq_autoconv_rate > 0))
+
+    criterion = nn.MSELoss()
+    
     print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
     print(f'R^2 for ML model: {r2_score(predictions, true_values)}')
     print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
