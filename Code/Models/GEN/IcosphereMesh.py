@@ -16,8 +16,12 @@ class IcosphereMesh:
     def __init__(self, n_refine):
         self.vertices, self.faces = self.create_icosahedron()
         self.midpoint_cache = {}
+        
         for _ in range(n_refine):
             self.refine_mesh()   
+        self.vertices = np.array(self.vertices).astype(np.float32)
+        self.faces = np.array(self.faces).astype(np.int32)   
+        self.edge_index = np.array(self.create_edges()).astype(np.int32)     
     
     def create_icosahedron(self):
         """
@@ -108,7 +112,7 @@ class IcosphereMesh:
         v4 = self.get_midpoint(v1, v2)
         v5 = self.get_midpoint(v2, v3)
         v6 = self.get_midpoint(v3, v1)
-        return [(v1, v4, v6), (v4, v2, v5), (v6, v5, v3), (v4, v5, v6)]
+        return [(v1, v4, v6), (v2, v5, v4), (v3, v6, v5), (v4, v5, v6)]
     
     def refine_mesh(self):
         """
@@ -118,3 +122,19 @@ class IcosphereMesh:
         for face in self.faces:
             new_faces.extend(self.refine_face(face))
         self.faces = new_faces
+
+    def create_edges(self):
+        """
+        Create edges from faces
+        Returns:
+            list: list of edges in COO format
+        """
+        edge_list1, edge_list2 = [], []
+        for face in self.faces:
+            v1, v2, v3 = face
+            edge_list1 += [v1, v2, v3]
+            edge_list2 += [v2, v3, v1]
+        edge_index = [edge_list1, edge_list2]
+        return edge_index
+
+        

@@ -2,6 +2,7 @@ import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
+from IcosphereMesh import IcosphereMesh
 
 class MLPEncoder(nn.Module):
     """
