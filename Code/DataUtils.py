@@ -1,11 +1,13 @@
 import xarray as xr
 import numpy as np
+import h5py
 from pathlib import Path
 import os
 import json
 
 #Open file, initialize data arrays
-cloud_var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud', 'qr_autoconv_cloud', 'nr_autoconv_cloud','auto_cldmsink_b_cloud']
+nc_cloud_var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud','auto_cldmsink_b_cloud']
+hdf_cloud_var_names = ['qc_autoconv', 'nc_autoconv', 'auto_cldmsink_b']
 turb_var_names = ['tke_sgs']
 THRESHOLD_VALUES = 0.62 * 721
 THRESHOLD = 1e-6
@@ -57,6 +59,12 @@ def min_max_denormalize(data, min_val, max_val):
     :return: Denormalized data.
     '''
     return data * (max_val - min_val) + min_val
+
+def standardize(data):
+    '''
+    Standardize data to have mean 0 and standard deviation 1.
+    '''
+    return (data - np.mean(data)) / np.std(data)
 
 def find_nonzero_threshold(dataset, num_values):
     '''
@@ -112,7 +120,7 @@ def prepare_dataset(dataset, index_list):
     dataset_copy = log_ignore_zero(dataset_copy)
     return dataset_copy.tolist()
 
-def create_data_map(data_file_path):
+def create_data_map(data_file_path, hdf = False):
     '''
     Create map to store all data arrays (input and target arrays).
 
@@ -120,10 +128,10 @@ def create_data_map(data_file_path):
     :return: Dictionary containing prepared data arrays.
     '''
     cloud_ds = xr.open_dataset(data_file_path, group = 'DiagnosticsClouds/profiles')
-    index_list = find_nonzero_threshold(cloud_ds[cloud_var_names[0]], THRESHOLD_VALUES)
+    index_list = find_nonzero_threshold(cloud_ds[nc_cloud_var_names[0]], THRESHOLD_VALUES)
     data_map = {}
-    for i in range(len(cloud_var_names)):
-        data_map[cloud_var_names[i]] = prepare_dataset(cloud_ds[cloud_var_names[i]], index_list)
+    for i in range(len(nc_cloud_var_names)):
+        data_map[nc_cloud_var_names[i]] = prepare_dataset(cloud_ds[nc_cloud_var_names[i]], index_list)
     turb_ds = xr.open_dataset(data_file_path, group = 'DiagnosticState/profiles')
     for i in range(len(turb_var_names)):
         data_map[turb_var_names[i]] = prepare_dataset(turb_ds[turb_var_names[i]], index_list)
@@ -145,6 +153,30 @@ def prepare_datasets(data_folder_path):
         data_maps.append(data_map)
     
     return data_maps
+
+def load_hdf_dataset(dataset_name, f):
+    '''
+    Load dataset from HDF5 file.
+
+    :param dataset_name: Name of the dataset to load.
+    :param f: Open HDF5 file object.
+    :return: Loaded dataset.
+    '''
+    return f[dataset_name][:]
+
+def prepare_hdf_dataset(data_file_path):
+    '''
+    Return unprocessed data map (dataset_name : array) for HDF5 file. 
+
+    :param data_file_path: Path to the HDF5 file.
+    :return: Data map.
+    '''
+    data_map = {}
+    with h5py.File(data_file_path, 'r') as f:
+        for i in range(len(hdf_cloud_var_names)):
+            data_map[hdf_cloud_var_names[i]] = load_hdf_dataset(hdf_cloud_var_names[i], f)
+        data_map[turb_var_names[0]] = load_hdf_dataset(turb_var_names[0], f)
+    return data_map
 
 def save_data_info(inputs, targets, model_folder_path, model_name):
     '''
