@@ -1,4 +1,5 @@
 import numpy as np
+import tetgen 
 
 class IcosphereMesh: 
     """
@@ -21,7 +22,7 @@ class IcosphereMesh:
             self.refine_mesh()   
         self.vertices = np.array(self.vertices).astype(np.float32)
         self.faces = np.array(self.faces).astype(np.int32)   
-        self.edge_index = np.array(self.create_edges()).astype(np.int32)     
+        self.edges = np.array(self.create_edges(self.faces)).astype(np.int32)     
     
     def create_icosahedron(self):
         """
@@ -123,18 +124,65 @@ class IcosphereMesh:
             new_faces.extend(self.refine_face(face))
         self.faces = new_faces
 
-    def create_edges(self):
+    def create_edges(self, faces):
         """
         Create edges from faces
         Returns:
-            list: list of edges in COO format
+            list: list of edges in COO format for PyG
         """
         edge_list1, edge_list2 = [], []
-        for face in self.faces:
+        for face in faces:
             v1, v2, v3 = face
-            edge_list1 += [v1, v2, v3]
-            edge_list2 += [v2, v3, v1]
+            edge_list1 += [v1, v2, v3, v2, v3, v1]
+            edge_list2 += [v2, v3, v1, v3, v1, v2]
         edge_index = [edge_list1, edge_list2]
         return edge_index
 
+class IcosphereTetrahedron(IcosphereMesh):
+    """
+    Create tetrahedron from icosphere mesh.
+
+    Args:
+        icosphere (IcosphereMesh): Icosphere mesh to create tetrahedron from.
+    """
+    
+    def __init__(self, n_refine, order = 1, minratio = 1.1, verbosity=0):
+        """
+        Initialize the IcosphereTetrahedron.
+
+        Args:
+            icosphere (IcosphereMesh): Icosphere mesh to create tetrahedron from.
+            verbosity (int, optional): Verbosity level for tetgen. Defaults to 1.
+            order (int, optional): Order of tetrahedron. Defaults to 2 (allow mid-edge nodes)
+            minratio (float, optional): Minimum circumradius to shortest edge length ratio. Defaults to 1.0.
+        """
+        super().__init__(n_refine)
+        self.verbosity = verbosity
+        self.order = order
+        self.minratio = minratio
+        self.vertices, self.faces = self.create_tetrahedron()
+        self.edges = np.array(self.create_edges(self.faces)).astype(np.int32)
         
+    def create_tetrahedron(self):
+        """
+        Create tetrahedron from icosphere mesh.
+
+        Returns:
+            tuple: Tuple containing vertices and faces of the tetrahedron
+        """
+        # Initialize TetGen
+        tgen = tetgen.TetGen(self.vertices, self.faces)        
+        # Generate tetrahedral mesh
+        nodes, tetrahedra = tgen.tetrahedralize(order = self.order, minratio = self.minratio, verbose = self.verbosity)
+        
+        #Extract re-indexed faces from tetrahedra
+        faces = []
+        for tet in tetrahedra:
+            faces.append([tet[0], tet[1], tet[2]])
+            faces.append([tet[0], tet[1], tet[3]])
+            faces.append([tet[0], tet[2], tet[3]])
+            faces.append([tet[1], tet[2], tet[3]])
+        
+        return np.array(nodes).astype(np.float32), np.array(faces).astype(np.int32)
+    
+    
