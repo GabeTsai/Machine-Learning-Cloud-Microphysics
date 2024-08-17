@@ -265,8 +265,8 @@ def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_p
     Plot a histogram of the true and predicted values.
     '''
     plt.clf()
-    plt.hist(predicted_values, bins = 100, alpha = 0.5, label = 'Predicted values')
-    plt.hist(true_values, bins = 100, alpha = 0.5, label = 'True values')
+    plt.hist(predicted_values, bins = 200, alpha = 0.5, label = 'Predicted values')
+    plt.hist(true_values, bins = 200, alpha = 0.5, label = 'True values')
     plt.xlabel('auto_cldmsink_b_cloud (kg/kg/s)')
     plt.ylabel('Frequency')
     plt.title(f'{plot_name}')
