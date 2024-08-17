@@ -5,7 +5,7 @@ import numpy as np
 import json
 import sys
 sys.path.append('../../')
-from DataUtils import * # Import functions and variables from CreateDataLists.py
+from DataUtils import * # Import functions and variables from DataUtils.py
 from Visualizations import histogram
 
 from pathlib import Path
@@ -54,7 +54,7 @@ def concat_data(data_maps, model_name, model_folder_path, include_qr_nr):
     target_data = target_data[filter_mask]
     input_data = input_data[filter_mask]
 
-    save_data_info(input_data, target_data, model_folder_path, model_name)
+    # save_data_info(input_data, target_data, model_folder_path, model_name)
 
     dims = (0)
     input_data = min_max_normalize(input_data, dims)
@@ -69,10 +69,12 @@ def create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_
     return inputs, targets
 
 def main():
-    model_name = 'MLP2'
+    model_name = 'MLP3'
     inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, f'../../../SavedModels/{model_name}', False)
     print(inputs.shape, targets.shape)
-    # histogram(targets, targets, model_name, '', '../../../Visualizations')
+    histogram(inputs[:, 0], inputs[:, 0], model_name, 'qc', '../../../Visualizations')
+    histogram(inputs[:, 1], inputs[:, 1], model_name, 'nc', '../../../Visualizations')
+    histogram(inputs[:, 2], inputs[:, 2], model_name, 'tke', '../../../Visualizations')
 
 if __name__ == "__main__":
     main()

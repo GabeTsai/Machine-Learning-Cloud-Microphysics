@@ -6,10 +6,11 @@ import numpy as np
 from pathlib import Path
 from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.MLP.MLPModel import MLP
-from Models.CNNs.CNNDataUtils import create_CNN_dataset
 from Models.MLP.MLPDataUtils import create_MLP_dataset
 from Models.LSTM.LSTMDataUtils import *
 from Models.LSTM.LSTMModel import LSTM
+from Models.GEN import *
+
 from Visualizations import plot_losses
 from sklearn.model_selection import KFold
 import pandas as pd
@@ -29,47 +30,85 @@ torch.manual_seed(99)
 # ray.init(num_gpus = 1)
 print(device)
 def decay_lr(optimizer, decay_rate):
-    '''
-    Decay learning rate by decay_rate
-    '''
+    """
+    Decay learning rate by decay_rate.
+
+    Args:
+        optimizer (torch.optim.Optimizer): The optimizer whose learning rate will be decayed.
+        decay_rate (float): The factor by which to decay the learning rate.
+    """
     for param_group in optimizer.param_groups:
         param_group['lr'] *= decay_rate
 
 def reset_weights(model):
-    '''
-    Reset weights to avoid weight leakage
-    '''
+    """
+    Reset weights to avoid weight leakage.
+
+    Args:
+        model (torch.nn.Module): The model whose weights will be reset.
+    """
     for layer in model.children():
         if hasattr(layer, 'reset_parameters'):
             layer.reset_parameters()
 
 def save_checkpoint(epoch, model, model_name, optimizer, folder, fold):
     """
-    Save model checkpoint
+    Save model checkpoint.
 
-    :param epoch: epoch number
-    :param model: model object
-    :param optimizer: optimizer object
+    Args:
+        epoch (int): The epoch number.
+        model (torch.nn.Module): The model object.
+        model_name (str): The name of the model.
+        optimizer (torch.optim.Optimizer): The optimizer object.
+        folder (str): The folder where the checkpoint will be saved.
+        fold (int): The fold number.
     """
     state = {'epoch': epoch, 'model': model, 'optimizer': optimizer}
     filename = f'{model_name}{fold}.pth.tar'
     torch.save(state, Path(folder) / filename)
 
-def choose_model(model_name, input_dim, target_dim, output_bias, config):
-    '''
-    Choose model based on model name
-    '''
+def choose_model(model_name, input_dim, output_bias, config):
+    """
+    Choose model based on model name.
+
+    Args:
+        model_name (str): The name of the model to choose.
+        input_dim (tuple): The input dimensions.
+        output_bias (bool): Whether to use output bias.
+        config (dict): The configuration dictionary.
+
+    Returns:
+        torch.nn.Module: The chosen model.
+
+    Raises:
+        ValueError: If the model name is not recognized.
+    """
     if 'MLP' in model_name:
         return MLP(input_dim[0], output_bias, config["hl1"], config["hl2"])
     elif model_name == 'LSTM':
         return LSTM(input_dim[1], config["hidden_dim"], config["num_layers"], output_bias) #inputs: (max_seq_len, num_features)
+    elif model_name == 'GEN':
+        latent_dim = config["latent_dim"]
+        encoder = MLPEncoder([input_dim[0], latent_dim, latent_dim])
+        node_mapper = MLPNodeStateMapper(latent_dim, latent_dim)
+        processor = Processor(latent_dim)
+        pooling_layer = GlobalPooling()
+        decoder = MLPDecoder([latent_dim, latent_dim, 1], output_bias)
+        return GEN(encoder, node_mapper, processor, pooling_layer, decoder, num_rounds = 16)
     else:
         raise ValueError('Model name not recognized.')
     
 def define_hyperparameter_search_space(model_name, device):
-    '''
+    """
     Define hyperparameter search space. Adjust as necessary.
-    '''
+    
+    Args:
+        model_name (str): The name of the model.
+        device (torch.device): The device to use.
+    
+    Returns:
+        dict: The hyperparameter search space.
+    """
     
     if 'MLP' in model_name:
         if str(device) == 'cuda':
@@ -93,6 +132,15 @@ def define_hyperparameter_search_space(model_name, device):
             "batch_size": tune.choice([128, 256, 512]),
             "max_epochs": 500
         }
+    elif model_name == 'GEN':
+        return {
+            "latent_dim": tune.choice([128, 256, 512]),
+            "num_rounds": tune.sample_from(lambda _: np.random.randint(10, 20)),
+            "lr": tune.loguniform(1e-4, 1e-3),
+            "weight_decay": tune.loguniform(1e-4, 1e-1),
+            "batch_size": tune.choice([128,256,512,1024]),
+            "max_epochs": 500
+        }
     else:
         return {}
 
@@ -106,10 +154,21 @@ def load_data(data_folder_path, model_folder_path, model_name):
     def create_LSTM_dataset_wrapper():
         return create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
 
+    def create_GEN_dataset_wrapper():
+        log_map = {
+            'qc_autoconv': True,
+            'nc_autoconv': False,
+            'tke_sgs': True,
+            'auto_cldmsink_b': True}
+        data_file_name = '00d-03h-00m-00s-000ms.h5'
+        data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
+        return createGENDataset(data_map, log_map)
+    
     model_data_loaders = {
         'MLP2': create_MLP_dataset_wrapper,
         'MLP3': create_MLP_dataset_wrapper,
-        'LSTM': create_LSTM_dataset_wrapper
+        'LSTM': create_LSTM_dataset_wrapper,
+        'GEN': create_GEN_dataset_wrapper
     }
 
     if model_name not in model_data_loaders:
@@ -227,17 +286,19 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config.
     '''
-    if 'MLP' in model_name:
-        input, target = dataset[0]
-        _, targets = dataset[:]
-        output_bias = torch.mean(targets)
-    elif 'LSTM' in model_name:
+    
+    if 'LSTM' in model_name:
         input, target, _ = dataset[0]
         _, targets, _ = zip(*dataset)
         output_bias = torch.mean(torch.tensor(targets))
+    else:
+        input, target = dataset[0]
+        _, targets = dataset[:]
+        output_bias = torch.mean(targets)
+
     best_model = None
 
-    model = choose_model(model_name, input.shape, target.shape, output_bias, config).to(device)
+    model = choose_model(model_name, input.shape, output_bias, config).to(device)
 
     val_percent = 0.2
     val_size = int(val_percent * len(dataset))
@@ -360,8 +421,6 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
         inputs, targets = inputs.to(device), targets.to(device)
         outputs = model(inputs)
         test_loss = criterion(outputs, targets)
-    print(outputs.shape)
-    print(targets.shape)
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
@@ -383,8 +442,9 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
 
         torch.save(eq_test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
 
-    elif 'MLP' in model_name:
+    else:
         input_data, target_data = data
+        print(input_data, target_data)
         dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
         test_percentage = 0.1 # 10% of data used for testing
@@ -396,30 +456,23 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
         torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
     return train_val_dataset
 
-def main():
-    data_folder_path = '../Data/NetCDFFiles'
-    checkpoint_path = None
-    single_split = False
+def tune_model(data_folder_path, model_folder_path, model_name, single_split = False):
     train_func = train_k_fold
     if single_split: 
         train_func = train_single_split
-    model_name = 'MLP3' 
-    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
-    
+    # model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
     cpus = os.cpu_count()
-    sim_trials = 4
     num_workers = int(cpus/4)
 
-    max_num_epochs = 200
     train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)
     config = define_hyperparameter_search_space(model_name, device)
     
     scheduler = ASHAScheduler(
         metric = "mean_val_loss",
         mode = "min", 
-        max_t = max_num_epochs,
         grace_period = 1,
-        reduction_factor = 2
+        reduction_factor = 3
     )
 
     tuner = tune.Tuner(
@@ -427,7 +480,7 @@ def main():
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
                                  num_workers = num_workers),
-            resources = {"cpu": num_workers, "gpu": 0.25},
+            resources = {"cpu": num_workers},
         ),
         param_space=config,
         tune_config=tune.TuneConfig(
@@ -436,7 +489,7 @@ def main():
             max_concurrent_trials=4  
         ), 
         run_config=ray.air.config.RunConfig(
-            name = "tune_k_fold",
+            name = "tune_model",
             verbose=1
         )
     )
@@ -460,6 +513,13 @@ def main():
     with open (f'{model_folder_path}/best_config_{model_name}.json', 'w') as f:
         json.dump(best_settings_map, f)
 
+def main():
+    data_folder_path = '../Data/'
+    checkpoint_path = None
+    model_name = 'GEN'
+    single_split = True
+    
+    tune_model(data_folder_path, checkpoint_path, model_name, single_split)
     # test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth',  map_location=torch.device('cpu'))
     # model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/LSTM/best_model_LSTMhidden_dim64num_layers2lr0.00019361424297303123weight_decay2.450336447031607e-06batch_size256max_epochs500.pth'
     # test_best_config(test_dataset, model_name, model_file_name, model_folder_path)

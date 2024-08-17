@@ -44,11 +44,11 @@ def createGENDataset(datamap, log_map):
         if log_map[key]:
             data_list[i] = np.log1p(data_list[i])
     
-    input_data = np.stack(data_list, axis=1)
+    input_data = np.stack(data_list[:-1], axis=1) #exclude target data
     input_data = standardize(input_data, (0))
     target_data = standardize(data_list[-1])
 
-    return input_data, target_data
+    return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
 def main():
     data_file_path = '../../../Data/00d-03h-00m-00s-000ms.h5'

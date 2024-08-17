@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 import torch_geometric.nn as pyg_nn
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
-from Icosphere import IcosphereMesh, IcosphereTetrahedron
+from .Icosphere import IcosphereMesh, IcosphereTetrahedron
 
 class MLPEncoder(nn.Module):
     """
