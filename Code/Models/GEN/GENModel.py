@@ -7,6 +7,8 @@ import torch_geometric.nn as pyg_nn
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 from .Icosphere import IcosphereMesh, IcosphereTetrahedron
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
 class MLPEncoder(nn.Module):
     """
     MLP to transform input data to latent vector
@@ -132,20 +134,20 @@ class GEN(nn.Module):
         self.decoder = decoder
         self.num_rounds = num_rounds
         self.mesh = IcosphereTetrahedron(num_refine)
-        self.node_pos = torch.tensor(self.mesh.vertices, dtype=torch.float32)
-        self.edge_index = torch.tensor(self.mesh.edges, dtype=torch.long)
+        self.node_pos = torch.FloatTensor(self.mesh.vertices).to(device)
+        self.edge_index = torch.LongTensor(self.mesh.edges).to(device)
 
     def forward(self, x):
         #Encode input data to latent vector
         latent_vectors = self.encoder(x)
-
+        
         #Map latent vector and node positions to node states for each batch element
         node_states = []
         batch_indices = []
         #Store node states for each latent vector and corresponding batch indices
         for i, latent_vector in enumerate(latent_vectors):
             node_states.append(self.node_mapper(latent_vector, self.node_pos))
-            batch_indices.append(torch.full((self.node_pos.size(0),), i, dtype = torch.long))
+            batch_indices.append(torch.full((self.node_pos.size(0),), i, dtype = torch.long, device = device))
         
         node_states = torch.cat(node_states, dim=0)  # (B * N, latent_dim)
         batch_indices = torch.cat(batch_indices, dim=0)  # (B * N,)

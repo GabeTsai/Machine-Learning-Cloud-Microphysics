@@ -136,10 +136,10 @@ def define_hyperparameter_search_space(model_name, device):
         return {
             "latent_dim": tune.choice([128, 256, 512]),
             "num_rounds": tune.sample_from(lambda _: np.random.randint(10, 20)),
-            "lr": tune.loguniform(1e-4, 1e-3),
+            "lr": 3e-4,
             "weight_decay": tune.loguniform(1e-4, 1e-1),
-            "batch_size": tune.choice([128,256,512,1024]),
-            "max_epochs": 500
+            "batch_size": 64,
+            "max_epochs": 20
         }
     else:
         return {}
@@ -212,9 +212,13 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         return epoch_loss / len(train_loader)
 
-    def train_epoch_default():
+    def train_epoch_default(epoch):
         model.train()
         epoch_loss = 0.0
+        
+        batch = 0
+        accum_batch_loss = 0
+        num_batch = 50
         for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
@@ -223,6 +227,11 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             loss.backward()
             optimizer.step()
             epoch_loss += loss.item()
+            accum_batch_loss += loss.item()
+            if batch % num_batch == 1:
+                print(f'Averaged loss over 50 batches: {accum_batch_loss/50}')
+                accum_batch_loss = 0
+            batch += 1
         return epoch_loss / len(train_loader)
 
     def validate_epoch_lstm():
@@ -262,7 +271,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         if epoch in decay_lr_at:
             decay_lr(optimizer, 0.1)
 
-        avg_train_loss = train_epoch()
+        avg_train_loss = train_epoch(epoch)
         train_losses.append(avg_train_loss)
 
         avg_val_loss = validate_epoch()
@@ -307,7 +316,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
 
     train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size= int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
-
+    
     val_loader = torch.utils.data.DataLoader(
             val_dataset, batch_size = int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
@@ -315,7 +324,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
 
     start_epoch = 0
-    early_stop = 100
+    early_stop = int(config["max_epochs"]/5)
     decay_lr_at = []
 
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
@@ -444,7 +453,6 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
 
     else:
         input_data, target_data = data
-        print(input_data, target_data)
         dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
         test_percentage = 0.1 # 10% of data used for testing
@@ -460,10 +468,13 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
     train_func = train_k_fold
     if single_split: 
         train_func = train_single_split
-    # model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
-    model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    # model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+
     cpus = os.cpu_count()
-    num_workers = int(cpus/4)
+    num_processes = 1
+    num_gpus = 1
+    num_workers = 16 if cpus/num_processes > 16 else cpus/num_processes
 
     train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)
     config = define_hyperparameter_search_space(model_name, device)
@@ -480,12 +491,12 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
                                  num_workers = num_workers),
-            resources = {"cpu": num_workers},
+            resources = {"cpu": num_workers, "gpu": num_gpus/num_processes},
         ),
         param_space=config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=10,
+            num_samples=3,
             max_concurrent_trials=4  
         ), 
         run_config=ray.air.config.RunConfig(
