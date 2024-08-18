@@ -21,8 +21,8 @@ class MLPEncoder(nn.Module):
         layers = []
         for i in range(len(layer_dims) - 1):
             layers.append(nn.Linear(layer_dims[i], layer_dims[i + 1]))
-            layers.append(nn.LayerNorm(layer_dims[i + 1]))
             if i < len(layer_dims) - 2:
+                layers.append(nn.LayerNorm(layer_dims[i + 1]))
                 layers.append(nn.SiLU())
         self.encoder_MLP = nn.Sequential(*layers)
 
@@ -45,13 +45,19 @@ class MLPNodeStateMapper(nn.Module):
             nn.LayerNorm(pos_emb_dim),
             nn.SiLU()
         )
-        self.node_state_mlp = nn.Linear(latent_dim + pos_emb_dim, latent_dim)
+        self.node_state_mlp = nn.Sequential(
+            nn.Linear(latent_dim + pos_emb_dim, latent_dim),
+            nn.LayerNorm(latent_dim),
+            nn.SiLU(),
+            nn.Linear(latent_dim, latent_dim)
+        )
 
     def forward(self, x, node_pos):
         pos_emb = self.positional_embedding_mlp(node_pos) # (num_nodes, pos_emb_dim)
         x = x.unsqueeze(0).expand(node_pos.size(0), x.size(0)) # (N, latent_dim)
         combined = torch.cat((x, pos_emb), dim=1) # (N, latent_dim + pos_emb_dim)
-        node_states = F.silu(self.node_state_mlp(combined))
+        node_states = self.node_state_mlp(combined)
+        node_states = node_states + x
         return node_states
 
 class Processor(nn.Module):
@@ -62,8 +68,11 @@ class Processor(nn.Module):
     
     def forward(self, data, num_rounds):
         x, edge_index = data.x, data.edge_index
+        
         for round in range(num_rounds):
+            residual = x
             x = self.layer_norm(self.conv(x, edge_index))
+            x = x + residual #residual connection
         return x
     
 class GlobalPooling(nn.Module):

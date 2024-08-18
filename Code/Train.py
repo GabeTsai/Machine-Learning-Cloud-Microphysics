@@ -20,6 +20,8 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.air import session
 import os
 import json
+import wandb
+wandb.require("core")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -139,7 +141,7 @@ def define_hyperparameter_search_space(model_name, device):
             "lr": 3e-4,
             "weight_decay": tune.loguniform(1e-4, 1e-1),
             "batch_size": 64,
-            "max_epochs": 20
+            "max_epochs": 5
         }
     else:
         return {}
@@ -212,13 +214,26 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         return epoch_loss / len(train_loader)
 
-    def train_epoch_default(epoch):
+    def train_epoch_default():
+        model.train()
+        epoch_loss = 0.0
+        for inputs, targets in train_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+        return epoch_loss / len(train_loader)
+
+    def train_epoch_GEN(epoch):
         model.train()
         epoch_loss = 0.0
         
         batch = 0
         accum_batch_loss = 0
-        num_batch = 50
+        num_batch = 100
         for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
@@ -229,10 +244,32 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
             accum_batch_loss += loss.item()
             if batch % num_batch == 1:
-                print(f'Averaged loss over 50 batches: {accum_batch_loss/50}')
+                print(f'Epoch {epoch}: Averaged train loss over {num_batch} batches {int(batch/num_batch)}: {accum_batch_loss/num_batch}')
+                wandb.log({f"Train loss over {num_batch} batches": accum_batch_loss/num_batch})
                 accum_batch_loss = 0
             batch += 1
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1) #clip gradients to -1 to 1
         return epoch_loss / len(train_loader)
+
+    def validate_epoch_GEN(epoch):
+        model.eval()
+        val_epoch_loss = 0.0
+
+        batch = 0
+        accum_batch_loss = 0
+        num_batch = 100
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                val_epoch_loss += loss.item()
+                if batch % num_batch == 1:
+                    print(f'Epoch {epoch}: Averaged val loss over {num_batch} batches {int(batch/len(train_loader))}: {accum_batch_loss/num_batch}')
+                    wandb.log({f"Val loss over {num_batch} batches": accum_batch_loss/num_batch})
+                    accum_batch_loss = 0
+                batch += 1
+        return val_epoch_loss / len(val_loader)
 
     def validate_epoch_lstm():
         model.eval()
@@ -257,9 +294,16 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         return val_epoch_loss / len(val_loader)
 
     # Choose the appropriate functions
-    train_epoch = train_epoch_lstm if 'LSTM' in model_name else train_epoch_default
-    validate_epoch = validate_epoch_lstm if 'LSTM' in model_name else validate_epoch_default
-
+    if 'LSTM' in model_name:
+        train_epoch = train_epoch_lstm
+        validate_epoch = validate_epoch_lstm
+    elif 'GEN' in model_name:
+        train_epoch = train_epoch_GEN
+        validate_epoch = validate_epoch_GEN
+    else:
+        train_epoch = train_epoch_default
+        validate_epoch = validate_epoch_default
+    
     train_losses = []
     val_losses = []
     min_val_loss = np.inf
@@ -289,6 +333,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         epoch += 1
 
     print(f'Min validation loss: {min_val_loss}')
+    wandb.finish()
     return min_val_loss, best_model
 
 def train_single_split(config, dataset, model_name, model_folder_path, num_workers, collate_fn=None):
@@ -326,6 +371,11 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     start_epoch = 0
     early_stop = int(config["max_epochs"]/5)
     decay_lr_at = []
+
+    wandb.init(
+      project=f"{model_name}",
+      config = config
+      )
 
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
                                         config["max_epochs"], decay_lr_at, start_epoch, model_folder_path, model_name)
@@ -465,6 +515,7 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
     return train_val_dataset
 
 def tune_model(data_folder_path, model_folder_path, model_name, single_split = False):
+    wandb.login()
     train_func = train_k_fold
     if single_split: 
         train_func = train_single_split
