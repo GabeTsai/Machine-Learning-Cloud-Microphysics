@@ -181,7 +181,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
     else:
         return data  # input_data, target_data, and length_data for models like LSTM
 
-def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_folder_path, model_name):
+def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_name):
     '''
     Train the model on a single train/test/val split until validation loss has not reached a new minimum in early_stop epochs.
 
@@ -194,7 +194,6 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     :param max_num_epochs: maximum number of epochs to train
     :param decay_lr_at: list of epochs to decay learning rate
     :param start_epoch: starting epoch
-    :param model_folder_path: folder to save model
     :param model_name: name of model
     :param is_lstm: boolean flag indicating if the model is an LSTM
     '''
@@ -319,7 +318,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     decay_lr_at = []
 
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
-                                        config["max_epochs"], decay_lr_at, start_epoch, model_folder_path, model_name)
+                                        config["max_epochs"], decay_lr_at, start_epoch, model_name)
 
     model_key = ''.join(f'{key}{str(item)}' for key, item in config.items()) # Create unique file key based on model config
     model_data = {
