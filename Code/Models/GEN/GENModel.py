@@ -6,7 +6,7 @@ from torch_geometric.data import Data
 import torch_geometric.nn as pyg_nn
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 from torch_scatter import scatter
-from Icosphere import IcosphereMesh, IcosphereTetrahedron
+from .Icosphere import IcosphereMesh, IcosphereTetrahedron
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

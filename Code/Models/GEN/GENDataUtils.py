@@ -8,8 +8,6 @@ sys.path.append('../../')
 from DataUtils import * # Import functions and variables from DataUtils.py
 from Visualizations import histogram
 
-torch.manual_seed(3407) #is all you need
-
 def create_GEN_dataset(datamap, log_map):
     '''
     Extract arrays for GEN model.
@@ -47,8 +45,8 @@ def create_GEN_dataset(datamap, log_map):
             data_list[i] = np.log1p(data_list[i])
     
     input_data = np.stack(data_list[:-1], axis=1) #exclude target data
-    input_data = standardize(input_data, (0))
-    target_data = standardize(data_list[-1])
+    input_data = min_max_normalize(input_data, (0))
+    target_data = min_max_normalize(data_list[-1])
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
