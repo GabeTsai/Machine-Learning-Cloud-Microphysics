@@ -27,7 +27,8 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Adjust this as needed
 
-torch.manual_seed(99)
+torch.manual_seed(3407) #is all you need
+torch.cuda.manual_seed(3407)
 
 # ray.init(num_gpus = 1)
 print(device)
@@ -96,7 +97,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         processor = Processor(latent_dim)
         pooling_layer = GlobalPooling()
         decoder = MLPDecoder([latent_dim, latent_dim, 1], output_bias)
-        return GEN(encoder, node_mapper, processor, pooling_layer, decoder, num_rounds = 16)
+        return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
     else:
         raise ValueError('Model name not recognized.')
     
@@ -136,10 +137,9 @@ def define_hyperparameter_search_space(model_name, device):
         }
     elif model_name == 'GEN':
         return {
-            "latent_dim": tune.choice([128, 256, 512]),
-            "num_rounds": tune.sample_from(lambda _: np.random.randint(10, 20)),
-            "lr": 3e-4,
-            "weight_decay": tune.loguniform(1e-4, 1e-1),
+            "latent_dim": 512,
+            "lr": 1e-5,
+            "weight_decay": tune.loguniform(1e-3, 1e-1),
             "batch_size": 64,
             "max_epochs": 5
         }
@@ -164,7 +164,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
             'auto_cldmsink_b': True}
         data_file_name = '00d-03h-00m-00s-000ms.h5'
         data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
-        return createGENDataset(data_map, log_map)
+        return create_GEN_dataset_subset(data_map, log_map, percent = 0.2)
     
     model_data_loaders = {
         'MLP2': create_MLP_dataset_wrapper,
@@ -243,7 +243,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             optimizer.step()
             epoch_loss += loss.item()
             accum_batch_loss += loss.item()
-            if batch % num_batch == 1:
+            if (batch + 1) % num_batch == 0:
                 print(f'Epoch {epoch}: Averaged train loss over {num_batch} batches {int(batch/num_batch)}: {accum_batch_loss/num_batch}')
                 wandb.log({f"Train loss over {num_batch} batches": accum_batch_loss/num_batch})
                 accum_batch_loss = 0
@@ -257,7 +257,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
 
         batch = 0
         accum_batch_loss = 0
-        num_batch = 100
+        num_batch = 1
         with torch.no_grad():
             for inputs, targets in val_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
@@ -318,7 +318,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         avg_train_loss = train_epoch(epoch)
         train_losses.append(avg_train_loss)
 
-        avg_val_loss = validate_epoch()
+        avg_val_loss = validate_epoch(epoch)
         val_losses.append(avg_val_loss)
 
         print(f'Epoch {epoch} || training loss: {avg_train_loss} || validation loss: {avg_val_loss}')
@@ -340,7 +340,6 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config.
     '''
-    
     if 'LSTM' in model_name:
         input, target, _ = dataset[0]
         _, targets, _ = zip(*dataset)
@@ -377,6 +376,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
       config = config
       )
 
+    wandb.log(config)
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
                                         config["max_epochs"], decay_lr_at, start_epoch, model_folder_path, model_name)
 
@@ -547,8 +547,8 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
         param_space=config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=3,
-            max_concurrent_trials=4  
+            num_samples=1,
+            max_concurrent_trials=1
         ), 
         run_config=ray.air.config.RunConfig(
             name = "tune_model",

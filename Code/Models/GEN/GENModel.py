@@ -61,18 +61,21 @@ class MLPNodeStateMapper(nn.Module):
         return node_states
 
 class Processor(nn.Module):
-    def __init__(self, hidden_dim):
+
+    def __init__(self, hidden_dim, num_rounds = 16):
         super(Processor, self).__init__()
-        self.conv = GCNConv(hidden_dim, hidden_dim)
-        self.layer_norm = nn.LayerNorm(hidden_dim)
+        self.convs = nn.ModuleList([GCNConv(hidden_dim, hidden_dim) for _ in range(num_rounds)])
+        self.layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(num_rounds)])
+        self.num_rounds = num_rounds
     
-    def forward(self, data, num_rounds):
+    def forward(self, data):
         x, edge_index = data.x, data.edge_index
         
-        for round in range(num_rounds):
+        for i in range(self.num_rounds):
             residual = x
-            x = self.layer_norm(self.conv(x, edge_index))
-            x = x + residual #residual connection
+            x = self.layer_norms[i](self.convs[i](x, edge_index))
+            x = x + residual #add residual connection
+
         return x
     
 class GlobalPooling(nn.Module):
@@ -134,18 +137,17 @@ class GEN(nn.Module):
     Returns:
         torch.Tensor: The output of the GEN model
     """
-    def __init__(self, encoder, node_mapper, processor, pooling_layer, decoder, num_rounds, num_refine = 3):
+    def __init__(self, encoder, node_mapper, processor, pooling_layer, decoder, num_refine = 3):
         super(GEN, self).__init__()
         self.encoder = encoder
         self.node_mapper = node_mapper
         self.processor = processor
         self.pooling_layer = pooling_layer
         self.decoder = decoder
-        self.num_rounds = num_rounds
         self.mesh = IcosphereTetrahedron(num_refine)
         self.node_pos = torch.FloatTensor(self.mesh.vertices).to(device)
         self.edge_index = torch.LongTensor(self.mesh.edges).to(device)
-
+    
     def forward(self, x):
         #Encode input data to latent vector
         latent_vectors = self.encoder(x)
@@ -165,7 +167,7 @@ class GEN(nn.Module):
         data = Data(x=node_states, edge_index=self.edge_index, batch = batch_indices)
 
         #Process node states with message passing
-        processed_node_states = self.processor(data, self.num_rounds)
+        processed_node_states = self.processor(data)
 
         #Aggregate node states into a single latent vector
         global_latent_vector = self.pooling_layer(processed_node_states, data.batch)
