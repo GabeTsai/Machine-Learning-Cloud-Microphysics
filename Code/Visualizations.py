@@ -65,13 +65,26 @@ def prepare_pred(predictions, true_values, true_data):
                          out = np.zeros_like(true_values, dtype = np.float64), where = true_values > 0)
     return predictions, true_values
 
-def denormalize_delog(arr, arr_min, arr_max):
+def denormalize_delog(arr, arr_min, arr_max, delog = True):
     '''
     Denormalize and unlog the array
     '''
     denorm_arr = min_max_denormalize(arr, arr_min, arr_max)
-    # return np.exp(denorm_arr, out=np.zeros_like(arr, dtype=np.float64), where = arr > 0)
+    if delog:
+        denorm_arr = np.exp(denorm_arr, out=np.zeros_like(arr, dtype=np.float64), where = arr != 0)
     return denorm_arr
+
+def denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True):
+    '''
+    De-normalize and de-log predictions using test dataset.
+    '''
+    with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'r') as f:
+        target_data_map = json.load(f)
+    min_val = target_data_map['min']
+    max_val = target_data_map['max']
+    predictions = denormalize_delog(predictions, min_val, max_val, delog)
+    true_values = denormalize_delog(true_values, min_val, max_val, delog)
+    return predictions, true_values
 
 def plot_pred_single_sample_time(true_values, predicted_values, i, time, height_map, ax):
     '''
@@ -102,7 +115,6 @@ def plot_pred_single_sample_height(true_values, predicted_values, i, time_list, 
     true_value_slice = true_values[:, i]
     
     predicted_value_slice = predicted_values[:, i]
-    print(height_map)
     height = 0
     count = 0
     time_list_plot = []
@@ -203,18 +215,6 @@ def plot_losses(train_losses, val_losses, model_name, fold):
     plt.legend()
     plt.title(f'{model_name} Training and Validation Losses')
     plt.savefig(Path(f'../Visualizations/{model_name}_fold{fold}/TrainingLosses.png'))
-
-def denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset):
-    '''
-    De-normalize and de-log predictions using test dataset.
-    '''
-    with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'r') as f:
-        target_data_map = json.load(f)
-    min_val = target_data_map['min']
-    max_val = target_data_map['max']
-    predictions = denormalize_delog(predictions, min_val, max_val)
-    true_values = denormalize_delog(true_values, min_val, max_val)
-    return predictions, true_values
     
 def scatter_plot(predicted_values, true_values, model_name, plot_name):
     '''
@@ -225,8 +225,10 @@ def scatter_plot(predicted_values, true_values, model_name, plot_name):
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
     plt.title('Predicted vs True values')
-    plt.xlim(0, np.max(true_values))
-    plt.ylim(0, np.max(true_values))
+    true_min = min(np.min(true_values), np.min(predicted_values))
+    true_max = max(np.max(true_values), np.max(predicted_values))
+    plt.xlim(true_min, true_max)
+    plt.ylim(true_min, true_max)
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot{plot_name}.png'))
 
 def density_plot(predicted_values, true_values, model_name, plot_name):
@@ -240,21 +242,21 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
         (1, '#fde624'),
     ], N=256)
     
-    
+    plt.clf()
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
     density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis)
-    density.set_clim(0, 20) 
+    density.set_clim(0, 30) 
     fig.colorbar(density, label = 'Number of points per pixel') 
     max_value = np.max(true_values)
 
-    true_min = np.min(true_values)
-    true_max = np.max(true_values)
+    true_min = min(np.min(true_values), np.min(predicted_values))
+    true_max = max(np.max(true_values), np.max(predicted_values))
     plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
-    plt.xlabel(r'Predicted Log Autoconversion ($kg kg^{-1} s^{-1}$)')
-    plt.ylabel(r'True Log Autoconversion ($kg kg^{-1} s^{-1}$)')
-    plt.xlim(np.min(true_values), np.max(true_values))
-    plt.ylim(np.min(true_values), np.max(true_values))
+    plt.xlabel(r'Predicted Autoconversion ($kg kg^{-1} s^{-1}$)')
+    plt.ylabel(r'True Autoconversion ($kg kg^{-1} s^{-1}$)')
+    plt.xlim(true_min, true_max)
+    plt.ylim(true_min, true_max)
     plt.title('Predicted vs True Autoconversion')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
@@ -272,7 +274,7 @@ def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_p
     plt.show()
     plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
 
-def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
+def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name, delog = True):
     '''
     Compare ML model predictions with Khairoutdinov & Kogan, 2000 paramaterized equation. 
     '''
@@ -301,37 +303,48 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name):
     #multiply KK2000 Equation by enhancement factor according to Morrison & Gettelman, 2008
     enhancement_factor = gamma(inv_v_qc + 2.47)/(gamma(inv_v_qc) * np.power(inv_v_qc, 2.47))
     eq_autoconv_rate = enhancement_factor * eq_autoconv_rate
+    if not delog:
+        eq_autoconv_rate = np.log(eq_autoconv_rate, out = np.zeros_like(eq_autoconv_rate, dtype=np.float64), where = (eq_autoconv_rate > 0))
 
-    eq_autoconv_rate = np.log(eq_autoconv_rate, out = np.zeros_like(eq_autoconv_rate, dtype=np.float64), where = (eq_autoconv_rate > 0))
+    mask = np.squeeze(true_values != 0)
+    masked_true_values = true_values[mask]
+    masked_predictions = predictions[mask]
+    masked_eq_autoconv_rate = eq_autoconv_rate[mask]
 
+    mean_percent_error_ML = np.mean((masked_predictions - masked_true_values)/masked_true_values)
+    mean_percent_error_eq = np.mean((masked_eq_autoconv_rate - masked_true_values)/masked_true_values)
     criterion = nn.MSELoss()
     
     print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
     print(f'R^2 for ML model: {r2_score(predictions, true_values)}')
+    print(f'Percent error for ML model: {mean_percent_error_ML}')
     print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
     print(f'R^2 for KK2000 equation: {r2_score(eq_autoconv_rate, true_values)}')
+    print(f'Percent error for KK2000 equation: {mean_percent_error_eq}')
 
     # histogram(predictions, true_values, model_name, f'../Visualizations')
     density_plot(eq_autoconv_rate, np.squeeze(true_values), model_name, 'KK2000')
-    histogram(predictions, true_values, model_name, f'{model_name} Predictions vs True Values', f"../Visualizations")    
-    histogram(eq_autoconv_rate, true_values, model_name, 'KK2000 vs True Values', f"../Visualizations") 
+    # histogram(predictions, true_values, model_name, f'{model_name} Predictions vs True Values', f"../Visualizations")    
+    # histogram(eq_autoconv_rate, true_values, model_name, 'KK2000 vs True Values', f"../Visualizations") 
 
 def main():
     from Train import choose_model, test_best_config
 
-    model_name = 'MLP3'
+    model_name = 'MLP2'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
     #best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth
     #best_model_MLP3hl164hl232lr0.000324132680419563weight_decay7.0845415052502345e-06batch_size256max_epochs1000.pth
-    model_file_name = 'best_model_MLP3hl164hl232lr0.000324132680419563weight_decay7.0845415052502345e-06batch_size256max_epochs1000.pth'
+    model_file_name = 'best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
     denorm_log_pred = True
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
 
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
     if denorm_log_pred:
-        predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset)
+        predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True)
+    
+    np.savetxt('/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/Visualizations/MLP3/true_values.csv', np.sort(true_values.flatten()), delimiter = 'csv')
     density_plot(predictions, true_values, model_name, '')
     scatter_plot(predictions, true_values, model_name, '')
     compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)

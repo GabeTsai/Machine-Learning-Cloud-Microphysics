@@ -8,7 +8,7 @@ sys.path.append('../../')
 from DataUtils import * # Import functions and variables from DataUtils.py
 from Visualizations import histogram
 
-def createGENDataset(datamap, log_map):
+def create_GEN_dataset(datamap, log_map):
     '''
     Extract arrays for GEN model.
 
@@ -50,6 +50,19 @@ def createGENDataset(datamap, log_map):
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
+def create_GEN_dataset_subset(data_map, log_map, percent):
+    """
+    Use subset of data for faster training
+    """
+    input_data, target_data = create_GEN_dataset(data_map, log_map)
+    p = torch.randperm(len(input_data))
+
+    subset_size = int(percent * len(input_data))
+
+    input_data_subset = input_data[p][:subset_size]
+    target_data_subset = target_data[p][:subset_size]
+
+    return input_data_subset, target_data_subset
 def main():
     data_file_path = '../../../Data/00d-03h-00m-00s-000ms.h5'
     log_map = {
@@ -58,12 +71,12 @@ def main():
         'tke_sgs': True,
         'auto_cldmsink_b': True}
     data_map = prepare_hdf_dataset(data_file_path)
-    input_data, target_data = createGENDataset(data_map, log_map)
+    input_data, target_data = create_GEN_dataset_subset(data_map, log_map, 0.2)
     print(input_data.shape, target_data.shape)
-    histogram(target_data, target_data, 'GEN', 'GENTargetValues', '../../../Visualizations')
-    histogram(input_data[:, 0], input_data[:, 0], 'GEN', 'GENqc', '../../../Visualizations')
-    histogram(input_data[:, 1], input_data[:, 1], 'GEN', 'GENnc', '../../../Visualizations')
-    histogram(input_data[:, 2], input_data[:, 2], 'GEN', 'GENtke', '../../../Visualizations')
+    # histogram(target_data, target_data, 'GEN', 'GENTargetValues', '../../../Visualizations')
+    # histogram(input_data[:, 0], input_data[:, 0], 'GEN', 'GENqc', '../../../Visualizations')
+    # histogram(input_data[:, 1], input_data[:, 1], 'GEN', 'GENnc', '../../../Visualizations')
+    # histogram(input_data[:, 2], input_data[:, 2], 'GEN', 'GENtke', '../../../Visualizations')
     
 
 if __name__ == '__main__':

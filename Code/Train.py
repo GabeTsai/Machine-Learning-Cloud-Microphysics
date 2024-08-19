@@ -20,12 +20,15 @@ from ray.tune.schedulers import ASHAScheduler
 from ray.air import session
 import os
 import json
+import wandb
+wandb.require("core")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Adjust this as needed
 
-torch.manual_seed(99)
+torch.manual_seed(3407) #is all you need
+torch.cuda.manual_seed(3407)
 
 # ray.init(num_gpus = 1)
 print(device)
@@ -94,7 +97,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         processor = Processor(latent_dim)
         pooling_layer = GlobalPooling()
         decoder = MLPDecoder([latent_dim, latent_dim, 1], output_bias)
-        return GEN(encoder, node_mapper, processor, pooling_layer, decoder, num_rounds = 16)
+        return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
     else:
         raise ValueError('Model name not recognized.')
     
@@ -134,12 +137,11 @@ def define_hyperparameter_search_space(model_name, device):
         }
     elif model_name == 'GEN':
         return {
-            "latent_dim": tune.choice([128, 256, 512]),
-            "num_rounds": tune.sample_from(lambda _: np.random.randint(10, 20)),
-            "lr": tune.loguniform(1e-4, 1e-3),
-            "weight_decay": tune.loguniform(1e-4, 1e-1),
-            "batch_size": tune.choice([128,256,512,1024]),
-            "max_epochs": 500
+            "latent_dim": 512,
+            "lr": 1e-5,
+            "weight_decay": tune.loguniform(1e-3, 1e-1),
+            "batch_size": 64,
+            "max_epochs": 5
         }
     else:
         return {}
@@ -162,7 +164,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
             'auto_cldmsink_b': True}
         data_file_name = '00d-03h-00m-00s-000ms.h5'
         data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
-        return createGENDataset(data_map, log_map)
+        return create_GEN_dataset_subset(data_map, log_map, percent = 0.2)
     
     model_data_loaders = {
         'MLP2': create_MLP_dataset_wrapper,
@@ -224,6 +226,50 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         return epoch_loss / len(train_loader)
 
+    def train_epoch_GEN(epoch):
+        model.train()
+        epoch_loss = 0.0
+        
+        batch = 0
+        accum_batch_loss = 0
+        num_batch = 100
+        for inputs, targets in train_loader:
+            inputs, targets = inputs.to(device), targets.to(device)
+            optimizer.zero_grad()
+            outputs = model(inputs)
+            loss = criterion(outputs, targets)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+            accum_batch_loss += loss.item()
+            if (batch + 1) % num_batch == 0:
+                print(f'Epoch {epoch}: Averaged train loss over {num_batch} batches {int(batch/num_batch)}: {accum_batch_loss/num_batch}')
+                wandb.log({f"Train loss over {num_batch} batches": accum_batch_loss/num_batch})
+                accum_batch_loss = 0
+            batch += 1
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1) #clip gradients to -1 to 1
+        return epoch_loss / len(train_loader)
+
+    def validate_epoch_GEN(epoch):
+        model.eval()
+        val_epoch_loss = 0.0
+
+        batch = 0
+        accum_batch_loss = 0
+        num_batch = 1
+        with torch.no_grad():
+            for inputs, targets in val_loader:
+                inputs, targets = inputs.to(device), targets.to(device)
+                outputs = model(inputs)
+                loss = criterion(outputs, targets)
+                val_epoch_loss += loss.item()
+                if batch % num_batch == 1:
+                    print(f'Epoch {epoch}: Averaged val loss over {num_batch} batches {int(batch/len(train_loader))}: {accum_batch_loss/num_batch}')
+                    wandb.log({f"Val loss over {num_batch} batches": accum_batch_loss/num_batch})
+                    accum_batch_loss = 0
+                batch += 1
+        return val_epoch_loss / len(val_loader)
+
     def validate_epoch_lstm():
         model.eval()
         val_epoch_loss = 0.0
@@ -247,9 +293,16 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         return val_epoch_loss / len(val_loader)
 
     # Choose the appropriate functions
-    train_epoch = train_epoch_lstm if 'LSTM' in model_name else train_epoch_default
-    validate_epoch = validate_epoch_lstm if 'LSTM' in model_name else validate_epoch_default
-
+    if 'LSTM' in model_name:
+        train_epoch = train_epoch_lstm
+        validate_epoch = validate_epoch_lstm
+    elif 'GEN' in model_name:
+        train_epoch = train_epoch_GEN
+        validate_epoch = validate_epoch_GEN
+    else:
+        train_epoch = train_epoch_default
+        validate_epoch = validate_epoch_default
+    
     train_losses = []
     val_losses = []
     min_val_loss = np.inf
@@ -261,10 +314,10 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         if epoch in decay_lr_at:
             decay_lr(optimizer, 0.1)
 
-        avg_train_loss = train_epoch()
+        avg_train_loss = train_epoch(epoch)
         train_losses.append(avg_train_loss)
 
-        avg_val_loss = validate_epoch()
+        avg_val_loss = validate_epoch(epoch)
         val_losses.append(avg_val_loss)
 
         print(f'Epoch {epoch} || training loss: {avg_train_loss} || validation loss: {avg_val_loss}')
@@ -279,13 +332,13 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         epoch += 1
 
     print(f'Min validation loss: {min_val_loss}')
+    wandb.finish()
     return min_val_loss, best_model
 
 def train_single_split(config, dataset, model_name, model_folder_path, num_workers, collate_fn=None):
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config.
     '''
-    
     if 'LSTM' in model_name:
         input, target, _ = dataset[0]
         _, targets, _ = zip(*dataset)
@@ -306,7 +359,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
 
     train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size= int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
-
+    
     val_loader = torch.utils.data.DataLoader(
             val_dataset, batch_size = int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
@@ -314,9 +367,15 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
 
     start_epoch = 0
-    early_stop = 100
+    early_stop = int(config["max_epochs"]/5)
     decay_lr_at = []
 
+    wandb.init(
+      project=f"{model_name}",
+      config = config
+      )
+
+    wandb.log(config)
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
                                         config["max_epochs"], decay_lr_at, start_epoch, model_name)
 
@@ -443,7 +502,6 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
 
     else:
         input_data, target_data = data
-        print(input_data, target_data)
         dataset = torch.utils.data.TensorDataset(input_data, target_data)
 
         test_percentage = 0.1 # 10% of data used for testing
@@ -456,13 +514,17 @@ def create_datasets(data_folder_path, model_folder_path, model_name):
     return train_val_dataset
 
 def tune_model(data_folder_path, model_folder_path, model_name, single_split = False):
+    wandb.login()
     train_func = train_k_fold
     if single_split: 
         train_func = train_single_split
-    # model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
-    model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    # model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+
     cpus = os.cpu_count()
-    num_workers = int(cpus/4)
+    num_processes = 1
+    num_gpus = 1
+    num_workers = 16 if cpus/num_processes > 16 else cpus/num_processes
 
     train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)
     config = define_hyperparameter_search_space(model_name, device)
@@ -479,13 +541,13 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
                                  num_workers = num_workers),
-            resources = {"cpu": num_workers},
+            resources = {"cpu": num_workers, "gpu": num_gpus/num_processes},
         ),
         param_space=config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=10,
-            max_concurrent_trials=4  
+            num_samples=1,
+            max_concurrent_trials=1
         ), 
         run_config=ray.air.config.RunConfig(
             name = "tune_model",

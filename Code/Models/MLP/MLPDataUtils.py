@@ -70,7 +70,7 @@ def create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_
 
 def main():
     model_name = 'MLP3'
-    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, f'../../../SavedModels/{model_name}', False)
+    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, f'../../../SavedModels/{model_name}', model_name)
     print(inputs.shape, targets.shape)
     histogram(inputs[:, 0], inputs[:, 0], model_name, 'qc', '../../../Visualizations')
     histogram(inputs[:, 1], inputs[:, 1], model_name, 'nc', '../../../Visualizations')

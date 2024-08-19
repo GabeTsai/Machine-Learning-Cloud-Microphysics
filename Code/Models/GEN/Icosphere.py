@@ -184,5 +184,8 @@ class IcosphereTetrahedron(IcosphereMesh):
             faces.append([tet[1], tet[2], tet[3]])
         
         return np.array(nodes).astype(np.float32), np.array(faces).astype(np.int32)
+
+    def create_edge_weights(self):
+        
     
     
