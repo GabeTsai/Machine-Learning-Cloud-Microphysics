@@ -92,7 +92,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         return LSTM(input_dim[1], config["hidden_dim"], config["num_layers"], output_bias) #inputs: (max_seq_len, num_features)
     elif model_name == 'GEN':
         latent_dim = config["latent_dim"]
-        encoder = MLPEncoder([input_dim[0], latent_dim, latent_dim])
+        encoder = MLPEncoder([input_dim[0], latent_dim, latent_dim, latent_dim])
         node_mapper = MLPNodeStateMapper(latent_dim, latent_dim)
         processor = Processor(latent_dim)
         pooling_layer = GlobalPooling()
@@ -138,10 +138,10 @@ def define_hyperparameter_search_space(model_name, device):
     elif model_name == 'GEN':
         return {
             "latent_dim": 512,
-            "lr": 1e-5,
+            "lr": 1e-6,
             "weight_decay": tune.loguniform(1e-3, 1e-1),
-            "batch_size": 64,
-            "max_epochs": 5
+            "batch_size": 32,
+            "max_epochs": 10
         }
     else:
         return {}
@@ -234,6 +234,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         batch = 0
         accum_batch_loss = 0
         num_batch = 100
+        print(len_train_loader)
         for inputs, targets in train_loader:
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
