@@ -162,7 +162,7 @@ class IcosphereTetrahedron(IcosphereMesh):
         self.minratio = minratio
         self.vertices, self.faces = self.create_tetrahedron()
         self.edges = np.array(self.create_edges(self.faces)).astype(np.int32)
-        self.edge_weights = self.create_edge_weights()
+        self.edge_feat = self.create_edge_feat()
         
     def create_tetrahedron(self):
         """
@@ -186,17 +186,19 @@ class IcosphereTetrahedron(IcosphereMesh):
         
         return np.array(nodes).astype(np.float32), np.array(faces).astype(np.int32)
 
-    def create_edge_weights(self):
+    def create_edge_feat(self):
         #vertices[edges[0]] -> positions of sender nodes
         #vertices[edges[1]] -> positions of receiver nodes
-        dist_pos = self.vertices[self.edges[0]] - self.vertices[self.edges[1]] #(num_nodes, 3)
+        dist_pos = self.vertices[self.edges[0]] - self.vertices[self.edges[1]] #(num_edges, 3)
         x = dist_pos[:, 0]
         y = dist_pos[:, 1]
         z = dist_pos[:, 2]
         distances = np.sqrt(x**2 + y**2 + z**2)
         max_dist = np.max(distances)
         min_dist = np.min(distances)
-        edge_weights = (distances - min_dist)/(max_dist - min_dist)
-        return edge_weights
+        edge_weights = (distances - min_dist)/(max_dist - min_dist) #(num_edges, 1)
+        edge_weights = np.expand_dims(edge_weights, 1)
+        edge_feat = np.concatenate((dist_pos, edge_weights), axis = 1) #(num_edges, 4)
+        return edge_feat
     
     

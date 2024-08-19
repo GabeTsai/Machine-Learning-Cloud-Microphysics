@@ -5,7 +5,8 @@ import torch.nn.functional as F
 from torch_geometric.data import Data
 import torch_geometric.nn as pyg_nn
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
-from .Icosphere import IcosphereMesh, IcosphereTetrahedron
+from torch_scatter import scatter
+from Icosphere import IcosphereMesh, IcosphereTetrahedron
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -40,17 +41,8 @@ class MLPNodeStateMapper(nn.Module):
     def __init__(self, latent_dim, pos_emb_dim, pos_dim = 3):
         super().__init__()
         self.pos_emb_dim = pos_emb_dim
-        self.positional_embedding_mlp = nn.Sequential(
-            nn.Linear(pos_dim, pos_emb_dim),
-            nn.LayerNorm(pos_emb_dim),
-            nn.SiLU()
-        )
-        self.node_state_mlp = nn.Sequential(
-            nn.Linear(latent_dim + pos_emb_dim, latent_dim),
-            nn.LayerNorm(latent_dim),
-            nn.SiLU(),
-            nn.Linear(latent_dim, latent_dim)
-        )
+        self.positional_embedding_mlp = MLPEncoder([pos_dim, pos_emb_dim, pos_emb_dim, pos_emb_dim])
+        self.node_state_mlp = MLPEncoder([latent_dim + pos_emb_dim, latent_dim, latent_dim, latent_dim]) 
 
     def forward(self, x, node_pos):
         pos_emb = self.positional_embedding_mlp(node_pos) # (num_nodes, pos_emb_dim)
@@ -59,24 +51,31 @@ class MLPNodeStateMapper(nn.Module):
         node_states = self.node_state_mlp(combined)
         node_states = node_states + x
         return node_states
-
-class NodeUpdateMLP(nn.Module):
     
 class Processor(nn.Module):
 
-    def __init__(self, hidden_dim, num_rounds = 16):
+    def __init__(self, node_update_mlp, edge_update_mlp, num_rounds = 16):
         super(Processor, self).__init__()
-        self.convs = nn.ModuleList([GCNConv(hidden_dim, hidden_dim) for _ in range(num_rounds)])
-        self.layer_norms = nn.ModuleList([nn.LayerNorm(hidden_dim) for _ in range(num_rounds)])
+        self.node_update_mlps = nn.ModuleList([node_update_mlp for _ in range(num_rounds)])
+        self.edge_update_mlps = nn.ModuleList([edge_update_mlp for _ in range(num_rounds)])
         self.num_rounds = num_rounds
     
     def forward(self, data):
-        x, edge_index, edge_weights = data.x, data.edge_index, data.edge_weight
+        x, edge_index, edge_features = data.x, data.edge_index, data.edge_attr
         
         for i in range(self.num_rounds):
-            residual = x
-            x = self.layer_norms[i](self.convs[i](x, edge_index, edge_weight = edge_weights))
-            x = x + residual #add residual connection
+            #Update edge states
+            residual_edge = edge_features
+            edge_features = self.edge_update_mlps[i](torch.cat((x[edge_index[0]], x[edge_index[1]], edge_features), axis = 1)) # (num_edges, latent_dim)
+            edge_features = edge_features + residual_edge #add residual connection
+
+            #Aggregate edge features
+            agg_edge_features = scatter(edge_features, edge_index[1], dim = 0, dim_size = x.size(0), reduce = 'sum') # (num_nodes, latent_dim)
+
+            #Update node states
+            residual_node = x
+            x = self.node_update_mlps[i](torch.cat((x , agg_edge_features), axis = 1)) # (num_nodes, latent_dim)
+            x = x + residual_node #add residual connection
 
         return x
     
@@ -139,17 +138,31 @@ class GEN(nn.Module):
     Returns:
         torch.Tensor: The output of the GEN model
     """
-    def __init__(self, encoder, node_mapper, processor, pooling_layer, decoder, num_refine = 3):
+    def __init__(self, input_dim, latent_dim, num_refine = 3, num_rounds = 16):
         super(GEN, self).__init__()
-        self.encoder = encoder
-        self.node_mapper = node_mapper
-        self.processor = processor
-        self.pooling_layer = pooling_layer
-        self.decoder = decoder
+        
         self.mesh = IcosphereTetrahedron(num_refine)
         self.node_pos = torch.FloatTensor(self.mesh.vertices).to(device)
         self.edge_index = torch.LongTensor(self.mesh.edges).to(device)
-        self.edge_weights = nn.Parameter(torch.FloatTensor(self.mesh.edge_weights)).to(device)
+        self.edge_features = torch.FloatTensor(self.mesh.edge_feat).to(device)
+        self.encoder = MLPEncoder([input_dim, latent_dim, latent_dim, latent_dim])
+        self.node_mapper = MLPNodeStateMapper(latent_dim, latent_dim)
+        self.edge_mapper = MLPEncoder([4, latent_dim, latent_dim, latent_dim])
+        self.processor = self.init_processor(latent_dim, num_rounds)
+        self.pooling_layer = GlobalPooling()
+        self.decoder = MLPDecoder([latent_dim, latent_dim, latent_dim, 1], torch.ones(1))
+
+    def init_processor(self, hidden_dim, num_rounds):
+        """
+        Initialize the processor module with the given hidden dimension and number of rounds
+
+        Args:
+            hidden_dim (int): Hidden dimension for the processor module
+            num_rounds (int): Number of message passing rounds
+        """
+        node_update_mlp = MLPEncoder([2 * hidden_dim, hidden_dim, hidden_dim, hidden_dim])
+        edge_update_mlp = MLPEncoder([3 * hidden_dim, hidden_dim, hidden_dim, hidden_dim])
+        return Processor(node_update_mlp, edge_update_mlp, num_rounds)
 
     def forward(self, x):
         #Encode input data to latent vector
@@ -158,16 +171,18 @@ class GEN(nn.Module):
         #Map latent vector and node positions to node states for each batch element
         node_states = []
         batch_indices = []
+
         #Store node states for each latent vector and corresponding batch indices
         for i, latent_vector in enumerate(latent_vectors):
-            node_states.append(self.node_mapper(latent_vector, self.node_pos))
+            node_states.append(self.node_mapper(latent_vector, self.node_pos))            
             batch_indices.append(torch.full((self.node_pos.size(0),), i, dtype = torch.long, device = device))
         
         node_states = torch.cat(node_states, dim=0)  # (B * N, latent_dim)
+        edge_features = self.edge_mapper(self.edge_features) # (num_edges, latent_dim)
         batch_indices = torch.cat(batch_indices, dim=0)  # (B * N,)
-
+        
         # Prepare data object for GCN
-        data = Data(x=node_states, edge_index=self.edge_index, edge_weight = self.edge_weights, batch = batch_indices)
+        data = Data(x=node_states, edge_index=self.edge_index, edge_attr = edge_features, batch = batch_indices)
 
         #Process node states with message passing
         processed_node_states = self.processor(data)

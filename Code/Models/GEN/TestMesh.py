@@ -116,9 +116,9 @@ def test_edge_weights():
     vertices = icosphere_tetrahedron.vertices
     faces = icosphere_tetrahedron.faces 
     edges = icosphere_tetrahedron.edges
-    print(icosphere_tetrahedron.edge_weights)
-    plt.hist(icosphere_tetrahedron.edge_weights, bins = 200, alpha = 0.5, label = 'Edge weights')
-    plt.savefig('/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/GEN/edge_weights')
+    print(icosphere_tetrahedron.edge_feat)
+    print(edges[0].shape)
+    plt.hist(icosphere_tetrahedron.edge_feat, bins = 200, alpha = 0.5, label = 'Edge weights')
     
 def main():
     # test_create_icosahedron()
