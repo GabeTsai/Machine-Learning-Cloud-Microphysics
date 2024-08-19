@@ -8,6 +8,8 @@ sys.path.append('../../')
 from DataUtils import * # Import functions and variables from DataUtils.py
 from Visualizations import histogram
 
+torch.manual_seed(3407) #is all you need
+
 def create_GEN_dataset(datamap, log_map):
     '''
     Extract arrays for GEN model.

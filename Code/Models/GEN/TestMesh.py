@@ -1,6 +1,9 @@
 import numpy as np
 from Icosphere import IcosphereMesh, IcosphereTetrahedron
 import plotly.graph_objects as go
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
 
 def test_create_icosahedron():
@@ -17,7 +20,7 @@ def test_refinement():
     """
     Check that icosphere refinement works as expected 
     """
-    refinement_level = 0
+    refinement_level = 1
     icosphere = IcosphereMesh(refinement_level)
     vertices = icosphere.vertices
     faces = icosphere.faces
@@ -27,6 +30,7 @@ def test_refinement():
     print(f"Refinement level {refinement_level}: {len(vertices)} vertices, {len(faces)} faces")
     assert len(vertices) == correct_num_vertices, f"Expected {correct_num_vertices} vertices, got {len(vertices)}"
     assert len(faces) == correct_num_faces, f"Expected {correct_num_faces} faces, got {len(faces)}"
+
 
 def plot_icosphere(vertices, faces, edges):
     """
@@ -105,12 +109,23 @@ def test_tetrahedron():
     print(f'Number of vertices: {len(vertices)}')
     print(f'Number of faces: {len(faces)}') 
     print(f'Number of edges: {len(edges[0]/2)}')
+
+def test_edge_weights():
+    n_refine = 3
+    icosphere_tetrahedron = IcosphereTetrahedron(n_refine)
+    vertices = icosphere_tetrahedron.vertices
+    faces = icosphere_tetrahedron.faces 
+    edges = icosphere_tetrahedron.edges
+    print(icosphere_tetrahedron.edge_weights)
+    plt.hist(icosphere_tetrahedron.edge_weights, bins = 200, alpha = 0.5, label = 'Edge weights')
+    plt.savefig('/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/GEN/edge_weights')
     
 def main():
     # test_create_icosahedron()
     # test_refinement()
     # test_icosphere_shape()
-    test_tetrahedron()
+    # test_tetrahedron()
+    test_edge_weights()
     print('All tests passed')
 
 if __name__ == "__main__":
