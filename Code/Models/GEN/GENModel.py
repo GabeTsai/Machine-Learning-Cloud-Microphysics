@@ -60,6 +60,8 @@ class MLPNodeStateMapper(nn.Module):
         node_states = node_states + x
         return node_states
 
+class NodeUpdateMLP(nn.Module):
+    
 class Processor(nn.Module):
 
     def __init__(self, hidden_dim, num_rounds = 16):
@@ -69,11 +71,11 @@ class Processor(nn.Module):
         self.num_rounds = num_rounds
     
     def forward(self, data):
-        x, edge_index = data.x, data.edge_index
+        x, edge_index, edge_weights = data.x, data.edge_index, data.edge_weight
         
         for i in range(self.num_rounds):
             residual = x
-            x = self.layer_norms[i](self.convs[i](x, edge_index))
+            x = self.layer_norms[i](self.convs[i](x, edge_index, edge_weight = edge_weights))
             x = x + residual #add residual connection
 
         return x
@@ -147,7 +149,8 @@ class GEN(nn.Module):
         self.mesh = IcosphereTetrahedron(num_refine)
         self.node_pos = torch.FloatTensor(self.mesh.vertices).to(device)
         self.edge_index = torch.LongTensor(self.mesh.edges).to(device)
-    
+        self.edge_weights = nn.Parameter(torch.FloatTensor(self.mesh.edge_weights)).to(device)
+
     def forward(self, x):
         #Encode input data to latent vector
         latent_vectors = self.encoder(x)
@@ -164,7 +167,7 @@ class GEN(nn.Module):
         batch_indices = torch.cat(batch_indices, dim=0)  # (B * N,)
 
         # Prepare data object for GCN
-        data = Data(x=node_states, edge_index=self.edge_index, batch = batch_indices)
+        data = Data(x=node_states, edge_index=self.edge_index, edge_weight = self.edge_weights, batch = batch_indices)
 
         #Process node states with message passing
         processed_node_states = self.processor(data)
