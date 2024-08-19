@@ -10,6 +10,8 @@ from Models.MLP.MLPDataUtils import create_MLP_dataset
 from Models.LSTM.LSTMDataUtils import *
 from Models.LSTM.LSTMModel import LSTM
 from Models.GEN import *
+from Models.DeepMLP import DeepMLP
+from Models import Layers
 
 from Visualizations import plot_losses
 from sklearn.model_selection import KFold
@@ -91,7 +93,15 @@ def choose_model(model_name, input_dim, output_bias, config):
     elif model_name == 'LSTM':
         return LSTM(input_dim[1], config["hidden_dim"], config["num_layers"], output_bias) #inputs: (max_seq_len, num_features)
     elif model_name == 'GEN':
-        return GEN(input_dim[0], config["latent_dim"])
+        latent_dim = config["latent_dim"]
+        encoder = MLP([input_dim[0], latent_dim, latent_dim], activation = nn.SiLU())
+        node_mapper = MLPNodeStateMapper(latent_dim, latent_dim)
+        processor = Processor(latent_dim)
+        pooling_layer = GlobalPooling()
+        decoder = MLP([latent_dim, latent_dim, 1], activation = nn.SiLU(), output_bias = output_bias)
+        return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
+    elif model_name == 'DeepMLP':
+        return DeepMLP(input_dim[1], config["latent_dim"], 1, output_bias, num_blocks = 5)
     else:
         raise ValueError('Model name not recognized.')
     
@@ -131,10 +141,18 @@ def define_hyperparameter_search_space(model_name, device):
         }
     elif model_name == 'GEN':
         return {
-            "latent_dim": 128,
-            "lr": 1e-6,
+            "latent_dim": 512,
+            "lr": 0,
             "weight_decay": tune.loguniform(1e-3, 1e-1),
-            "batch_size": 32,
+            "batch_size": 64,
+            "max_epochs": 10
+        }
+    elif model_name == 'DeepMLP':
+        return {
+            "latent_dim": 128,
+            "lr": 0,
+            "weight_decay": tune.loguniform(1e-3, 1e-1),
+            "batch_size": 64,
             "max_epochs": 10
         }
     else:
@@ -150,7 +168,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
     def create_LSTM_dataset_wrapper():
         return create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
 
-    def create_GEN_dataset_wrapper():
+    def create_deep_dataset_wrapper():
         log_map = {
             'qc_autoconv': True,
             'nc_autoconv': False,
@@ -158,13 +176,14 @@ def load_data(data_folder_path, model_folder_path, model_name):
             'auto_cldmsink_b': True}
         data_file_name = '00d-03h-00m-00s-000ms.h5'
         data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
-        return create_GEN_dataset_subset(data_map, log_map, percent = 0.2)
+        return create_deep_dataset_subset(data_map, log_map, percent = 1)
     
     model_data_loaders = {
         'MLP2': create_MLP_dataset_wrapper,
         'MLP3': create_MLP_dataset_wrapper,
         'LSTM': create_LSTM_dataset_wrapper,
-        'GEN': create_GEN_dataset_wrapper
+        'GEN': create_deep_dataset_wrapper,
+        'DeepMLP': create_deep_dataset_wrapper
     }
 
     if model_name not in model_data_loaders:
@@ -220,7 +239,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         return epoch_loss / len(train_loader)
 
-    def train_epoch_GEN(epoch):
+    def train_epoch_deep(epoch):
         model.train()
         epoch_loss = 0.0
         
@@ -244,7 +263,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1) #clip gradients to -1 to 1
         return epoch_loss / len(train_loader)
 
-    def validate_epoch_GEN(epoch):
+    def validate_epoch_deep(epoch):
         model.eval()
         val_epoch_loss = 0.0
 
@@ -290,9 +309,9 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     if 'LSTM' in model_name:
         train_epoch = train_epoch_lstm
         validate_epoch = validate_epoch_lstm
-    elif 'GEN' in model_name:
-        train_epoch = train_epoch_GEN
-        validate_epoch = validate_epoch_GEN
+    elif 'GEN' or 'DeepMLP' in model_name:
+        train_epoch = train_epoch_deep
+        validate_epoch = validate_epoch_deep
     else:
         train_epoch = train_epoch_default
         validate_epoch = validate_epoch_default
@@ -359,6 +378,8 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
 
     criterion = nn.MSELoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
+    if model_name == 'GEN' or model_name == 'DeepMLP':
+        #TO DO: 
 
     start_epoch = 0
     early_stop = int(config["max_epochs"]/5)
@@ -517,7 +538,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
 
     cpus = os.cpu_count()
     num_processes = 1
-    num_gpus = 1
+    num_gpus = torch.cuda.device_count()
     num_workers = 16 if cpus/num_processes > 16 else cpus/num_processes
 
     train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)

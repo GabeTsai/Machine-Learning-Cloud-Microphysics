@@ -6,29 +6,12 @@ from torch_geometric.data import Data
 import torch_geometric.nn as pyg_nn
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 from torch_scatter import scatter
-from .Icosphere import IcosphereMesh, IcosphereTetrahedron
+from Icosphere import IcosphereMesh, IcosphereTetrahedron
+import sys
+sys.path.append('../')
+from Layers import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-class MLPEncoder(nn.Module):
-    """
-    MLP to transform input data to latent vector
-
-    Args:
-        layer_dims (list): List of dimensions for each layer in the encoder
-    """
-    def __init__(self, layer_dims):
-        super().__init__()
-        layers = []
-        for i in range(len(layer_dims) - 1):
-            layers.append(nn.Linear(layer_dims[i], layer_dims[i + 1]))
-            if i < len(layer_dims) - 2:
-                layers.append(nn.LayerNorm(layer_dims[i + 1]))
-                layers.append(nn.SiLU())
-        self.encoder_MLP = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.encoder_MLP(x)
 
 class MLPNodeStateMapper(nn.Module):
     """
@@ -41,8 +24,8 @@ class MLPNodeStateMapper(nn.Module):
     def __init__(self, latent_dim, pos_emb_dim, pos_dim = 3):
         super().__init__()
         self.pos_emb_dim = pos_emb_dim
-        self.positional_embedding_mlp = MLPEncoder([pos_dim, pos_emb_dim, pos_emb_dim, pos_emb_dim])
-        self.node_state_mlp = MLPEncoder([latent_dim + pos_emb_dim, latent_dim, latent_dim, latent_dim]) 
+        self.positional_embedding_mlp = MLP([pos_dim, pos_emb_dim, pos_emb_dim, pos_emb_dim], nn.SiLU())
+        self.node_state_mlp = MLP([latent_dim + pos_emb_dim, latent_dim, latent_dim, latent_dim], nn.SiLU()) 
 
     def forward(self, x, node_pos):
         pos_emb = self.positional_embedding_mlp(node_pos) # (num_nodes, pos_emb_dim)
@@ -100,40 +83,16 @@ class GlobalPooling(nn.Module):
             return pyg_nn.global_max_pool(x, batch)
         else:
             raise ValueError(f"Pooling method {self.method} not supported.")
-        
-class MLPDecoder(nn.Module):
-    """
-    MLP to transform latent vector obtained from mesh processor to output
-
-    Args:
-        layer_dims (list): List of dimensions for each layer in the decoder
-        output_bias (torch.Tensor): The initial bias for the output layer. Initialized to mean of output data
-    """
-    def __init__(self, layer_dims, output_bias=None):
-        super().__init__()
-        layers = []
-        for i in range(len(layer_dims) - 1):
-            layers.append(nn.Linear(layer_dims[i], layer_dims[i + 1]))
-            if i < len(layer_dims) - 2:
-                layers.append(nn.SiLU())
-        self.decoder_MLP = nn.Sequential(*layers)
-        if output_bias is not None:
-            self.decoder_MLP[-1].bias = torch.nn.Parameter(output_bias)
-
-    def forward(self, x):
-        return self.decoder_MLP(x)
 
 class GEN(nn.Module):
     """
     GEN model
 
     Args:
-        encoder (nn.Module): Encoder module
-        node_mapper (nn.Module): Node state mapper module
-        processor (nn.Module): Processor module
-        pooling_layer (nn.Module): Global pooling layer
-        decoder (nn.Module): Decoder module
-        num_rounds (int): Number of message passing rounds
+        input_dim (int): Dimension of the input features
+        latent_dim (int): Dimension of the latent space
+        num_refine (int, optional): Number of refinement steps (default: 3)
+        num_rounds (int, optional): Number of message passing rounds (default: 16)
 
     Returns:
         torch.Tensor: The output of the GEN model
@@ -145,12 +104,12 @@ class GEN(nn.Module):
         self.node_pos = torch.FloatTensor(self.mesh.vertices).to(device)
         self.edge_index = torch.LongTensor(self.mesh.edges).to(device)
         self.edge_features = torch.FloatTensor(self.mesh.edge_feat).to(device)
-        self.encoder = MLPEncoder([input_dim, latent_dim, latent_dim, latent_dim])
+        self.encoder = MLP([input_dim, latent_dim, latent_dim, latent_dim], nn.SiLU())
         self.node_mapper = MLPNodeStateMapper(latent_dim, latent_dim)
-        self.edge_mapper = MLPEncoder([4, latent_dim, latent_dim, latent_dim])
-        self.processor = self.init_processor(latent_dim, num_rounds)
+        self.edge_mapper = MLP([4, latent_dim, latent_dim, latent_dim], nn.SiLU())
+        self.processor = self.init_processor(latent_dim, num_rounds) 
         self.pooling_layer = GlobalPooling()
-        self.decoder = MLPDecoder([latent_dim, latent_dim, latent_dim, 1], torch.ones(1))
+        self.decoder = MLP([latent_dim, latent_dim, latent_dim, 1], activation = nn.SiLU())
 
     def init_processor(self, hidden_dim, num_rounds):
         """
@@ -160,8 +119,8 @@ class GEN(nn.Module):
             hidden_dim (int): Hidden dimension for the processor module
             num_rounds (int): Number of message passing rounds
         """
-        node_update_mlp = MLPEncoder([2 * hidden_dim, hidden_dim, hidden_dim, hidden_dim])
-        edge_update_mlp = MLPEncoder([3 * hidden_dim, hidden_dim, hidden_dim, hidden_dim])
+        node_update_mlp = MLP([2 * hidden_dim, hidden_dim, hidden_dim, hidden_dim], nn.SiLU())
+        edge_update_mlp = MLP([3 * hidden_dim, hidden_dim, hidden_dim, hidden_dim], nn.SiLU())
         return Processor(node_update_mlp, edge_update_mlp, num_rounds)
 
     def forward(self, x):

@@ -1,5 +1,6 @@
 import xarray as xr
 import numpy as np
+import torch
 import h5py
 from pathlib import Path
 import os
@@ -241,6 +242,62 @@ def prepare_hdf_dataset(data_file_path):
             data_map[hdf_cloud_var_names[i]] = load_hdf_dataset(hdf_cloud_var_names[i], index_list, f)
         data_map[turb_var_names[0]] = load_hdf_dataset(turb_var_names[0], index_list, f)
     return data_map
+
+def create_deep_dataset(datamap, log_map):
+    '''
+    Extract arrays for a deep model.
+
+    Args:
+        datamap (dict): Dictionary mapping variable names to data arrays.
+        log_list (dict): Dictionary mapping variable names to boolean values indicating whether to log-transform the data.
+    
+    Returns:
+        tuple: Tuple containing transformed input and target data arrays.
+    '''
+    
+    for key in datamap:
+        datamap[key] = datamap[key].flatten().transpose()
+    
+    data_list = [
+        datamap['qc_autoconv'], 
+        datamap['nc_autoconv'], 
+        datamap['tke_sgs'], 
+        datamap['auto_cldmsink_b']
+    ]
+    
+    # Create a filter mask for non-outliers across all relevant variables
+    filter_mask = (
+        remove_outliers(data_list[-1]) &  # auto_cldmsink_b
+        remove_outliers(data_list[2]) &   # tke_sgs
+        remove_outliers(data_list[1]) &   # nc_autoconv
+        remove_outliers(data_list[0])     # qc_autoconv
+    )
+    
+    # Apply the filter mask and log transform where necessary
+    for i, (data, key) in enumerate(zip(data_list, log_map)):
+        data_list[i] = data[filter_mask]
+        if log_map[key]:
+            data_list[i] = np.log1p(data_list[i])
+    
+    input_data = np.stack(data_list[:-1], axis=1) #exclude target data
+    input_data = min_max_normalize(input_data, (0))
+    target_data = min_max_normalize(data_list[-1])
+
+    return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
+
+def create_deep_dataset_subset(data_map, log_map, percent):
+    """
+    Use subset of data for faster training
+    """
+    input_data, target_data = create_deep_dataset(data_map, log_map)
+    p = torch.randperm(len(input_data))
+
+    subset_size = int(percent * len(input_data))
+
+    input_data_subset = input_data[p][:subset_size]
+    target_data_subset = target_data[p][:subset_size]
+
+    return input_data_subset, target_data_subset
 
 def save_data_info(inputs, targets, model_folder_path, model_name):
     """
