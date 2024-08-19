@@ -21,12 +21,7 @@ def testGENModel():
     '''
     Test GENModel forward pass
     '''
-    encoder = MLPEncoder([3, 512, 512])
-    node_mapper = MLPNodeStateMapper(512, 512)
-    processor = Processor(512, num_rounds = 16)
-    pooling_layer = GlobalPooling()
-    decoder = MLPDecoder([512, 512, 1], torch.ones(1)) 
-    model = GEN(encoder, node_mapper, processor, pooling_layer, decoder)
+    model = GEN(3, 64)
     data = torch.randn(5, 3)
     out = model(data)
     print(out) #Since output bias is 1, output should be close to 1
