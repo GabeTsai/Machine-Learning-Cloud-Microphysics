@@ -202,6 +202,27 @@ def create_data_map(data_file_path, hdf=False):
         data_map[turb_var_names[i]] = prepare_dataset(turb_ds[turb_var_names[i]], index_list)
     return data_map
 
+def filter_data(qc):
+    return qc >= THRESHOLD
+
+def create_test_data_map_nc(data_file_path):
+    cloud_ds = xr.open_dataset(data_file_path, group='DiagnosticsClouds/profiles')
+    data_map = {}
+    filter = filter_data(np.array(cloud_ds[nc_cloud_var_names[0]]).squeeze().flatten())
+    for i in range(len(nc_cloud_var_names)):
+        data = np.array(cloud_ds[nc_cloud_var_names[i]])
+        data = data.squeeze().flatten()
+        data = data[filter]
+        data_map[nc_cloud_var_names[i]] = data
+    turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
+    for i in range(len(turb_var_names)):
+        data = np.array(turb_ds[turb_var_names[i]])
+        data = data.squeeze().flatten()
+        data = data[filter]
+        data_map[turb_var_names[i]] = data
+    
+    return data_map
+
 def prepare_datasets(data_folder_path):
     """
     Return a list of logged, un-normalized data maps for each NetCDF file in the data folder.
@@ -313,7 +334,7 @@ def create_deep_dataset_subset(data_map, log_map, percent):
 
     return input_data_subset, target_data_subset
 
-def save_data_info(inputs, targets, model_folder_path, model_name):
+def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name = ''):
     """
     Save data information (mean, min, max) to JSON files. 
     Needed for rescaling model outputs to real-life interpretable values. 
@@ -344,10 +365,10 @@ def save_data_info(inputs, targets, model_folder_path, model_name):
     input_data_map['nc'] = {'min': np.min(masked_nc).item(), 'max': np.max(masked_nc).item()}
     input_data_map['tke_sgs'] = {'min': np.min(masked_tke_sgs).item(), 'max': np.max(masked_tke_sgs).item()}
 
-    with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'w') as f:
+    with open(Path(model_folder_path) / f'{model_name}_{dataset_name}_target_data_map.json', 'w') as f:
         json.dump(target_data_map, f)
 
-    with open(Path(model_folder_path) / f'{model_name}_input_data_map.json', 'w') as f:
+    with open(Path(model_folder_path) / f'{model_name}_{dataset_name}_input_data_map.json', 'w') as f:
         json.dump(input_data_map, f)
         
 def save_data_info_mean_std(inputs, targets, model_folder_path, model_name):

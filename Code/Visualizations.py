@@ -345,7 +345,7 @@ def main():
     
     density_plot(predictions, true_values, model_name, '')
     scatter_plot(predictions, true_values, model_name, '')
-    compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
+    # compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
 
     
 if __name__ == "__main__":
