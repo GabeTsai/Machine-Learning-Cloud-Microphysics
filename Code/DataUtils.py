@@ -213,12 +213,14 @@ def create_test_data_map_nc(data_file_path):
         data = np.array(cloud_ds[nc_cloud_var_names[i]])
         data = data.squeeze().flatten()
         data = data[filter]
+        data = log_ignore_zero(data)
         data_map[nc_cloud_var_names[i]] = data
     turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
     for i in range(len(turb_var_names)):
         data = np.array(turb_ds[turb_var_names[i]])
         data = data.squeeze().flatten()
         data = data[filter]
+        data = log_ignore_zero(data)
         data_map[turb_var_names[i]] = data
     
     return data_map
@@ -334,9 +336,9 @@ def create_deep_dataset_subset(data_map, log_map, percent):
 
     return input_data_subset, target_data_subset
 
-def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name = ''):
+def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name=''):
     """
-    Save data information (mean, min, max) to JSON files. 
+    Save data information (mean, min, max, std) to JSON files. 
     Needed for rescaling model outputs to real-life interpretable values. 
 
     Args:
@@ -344,10 +346,12 @@ def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name 
         targets (np.array): Target data array.
         model_folder_path (str): Path to the folder to save JSON files.
         model_name (str): Name of the model to use in filenames.
+        dataset_name (str): Optional dataset name to include in filenames.
     """
     input_data_map = {}
-    
     target_data_map = {}
+    
+    # Process targets
     non_zero_mask = targets != 0
     masked_targets = targets[non_zero_mask]
     target_data_map['mean'] = np.mean(targets).item()
@@ -355,49 +359,38 @@ def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name 
     target_data_map['min'] = np.min(masked_targets).item()
     target_data_map['max'] = np.max(masked_targets).item()
     
+    # Process inputs
     qc = inputs[:, 0]
     nc = inputs[:, 1]
     tke_sgs = inputs[:, 2]
-    masked_qc = qc[qc !=0]
+    
+    masked_qc = qc[qc != 0]
     masked_nc = nc[nc != 0]
     masked_tke_sgs = tke_sgs[tke_sgs != 0]
-    input_data_map['qc'] = {'min': np.min(masked_qc).item(), 'max': np.max(masked_qc).item()}
-    input_data_map['nc'] = {'min': np.min(masked_nc).item(), 'max': np.max(masked_nc).item()}
-    input_data_map['tke_sgs'] = {'min': np.min(masked_tke_sgs).item(), 'max': np.max(masked_tke_sgs).item()}
+    
+    input_data_map['qc'] = {
+        'mean': np.mean(qc).item(),
+        'std': np.std(qc).item(),
+        'min': np.min(masked_qc).item(),
+        'max': np.max(masked_qc).item()
+    }
+    input_data_map['nc'] = {
+        'mean': np.mean(nc).item(),
+        'std': np.std(nc).item(),
+        'min': np.min(masked_nc).item(),
+        'max': np.max(masked_nc).item()
+    }
+    input_data_map['tke_sgs'] = {
+        'mean': np.mean(tke_sgs).item(),
+        'std': np.std(tke_sgs).item(),
+        'min': np.min(masked_tke_sgs).item(),
+        'max': np.max(masked_tke_sgs).item()
+    }
 
+    # Save the target data map
     with open(Path(model_folder_path) / f'{model_name}_{dataset_name}_target_data_map.json', 'w') as f:
         json.dump(target_data_map, f)
 
+    # Save the input data map
     with open(Path(model_folder_path) / f'{model_name}_{dataset_name}_input_data_map.json', 'w') as f:
-        json.dump(input_data_map, f)
-        
-def save_data_info_mean_std(inputs, targets, model_folder_path, model_name):
-    """
-    Save data information (mean, std) to JSON files. 
-    Needed for rescaling model outputs to real-life interpretable values. 
-
-    Args:
-        inputs (np.array): Input data array.
-        targets (np.array): Target data array.
-        model_folder_path (str): Path to the folder to save JSON files.
-        model_name (str): Name of the model to use in filenames.
-    """
-    input_data_map = {}
-    target_data_map = {}
-
-    target_data_map['mean'] = np.mean(targets).item()
-    target_data_map['std'] = np.std(targets).item()
-    
-    qc = inputs[:, 0]
-    nc = inputs[:, 1]
-    tke_sgs = inputs[:, 2]
-    
-    input_data_map['qc'] = {'mean': np.mean(qc).item(), 'std': np.std(qc).item()}
-    input_data_map['nc'] = {'mean': np.mean(nc).item(), 'std': np.std(nc).item()}
-    input_data_map['tke_sgs'] = {'mean': np.mean(tke_sgs).item(), 'std': np.std(tke_sgs).item()}
-
-    with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'w') as f:
-        json.dump(target_data_map, f)
-
-    with open(Path(model_folder_path) / f'{model_name}_input_data_map.json', 'w') as f:
         json.dump(input_data_map, f)

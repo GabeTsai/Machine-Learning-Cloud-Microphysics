@@ -6,7 +6,7 @@ from Models.Layers import *
 class Processor(nn.Module):
     def __init__(self, latent_dim, num_blocks):
         super().__init__()
-        self.MLP_block = MLP([latent_dim, latent_dim, latent_dim], use_layer_norm = False, use_batch_norm = True)
+        self.MLP_block = MLP([latent_dim, latent_dim, latent_dim, latent_dim], use_layer_norm = False, use_batch_norm = True)
         self.blocks = nn.ModuleList([
             self.MLP_block for _ in range(num_blocks)
         ])

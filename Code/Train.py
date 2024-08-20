@@ -29,13 +29,10 @@ wandb.require("core")
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Adjust this as needed
-
 torch.manual_seed(3407) #is all you need
 torch.cuda.manual_seed(3407)
 
 # ray.init(num_gpus = 1)
-print(device)
 def decay_lr(optimizer, decay_rate):
     """
     Decay learning rate by decay_rate.
@@ -103,7 +100,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         decoder = MLP([latent_dim, latent_dim, 1], activation = nn.SiLU(), output_bias = output_bias)
         return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
     elif model_name == 'DeepMLP':
-        return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = 5)
+        return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = config["num_blocks"])
     else:
         raise ValueError('Model name not recognized.')
     
@@ -151,11 +148,12 @@ def define_hyperparameter_search_space(model_name, device):
         }
     elif model_name == 'DeepMLP':
         return {
-            "latent_dim": tune.choice([128, 256, 512]),
+            "latent_dim": tune.randint(64, 512),
+            "num_blocks": tune.choice([3,4,5]),
             "max_lr": 3e-5,
             "gamma": tune.uniform(0.5, 0.95),
-            "batch_size": 128,
-            "max_epochs": 50
+            "batch_size": 32,
+            "max_epochs": 20
         }
     else:
         return {}
@@ -249,12 +247,11 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         max_lr = get_set_lr(optimizer)
         total_num_steps = len(train_loader) * max_num_epochs
         inc_lr_until = int(0.1 * total_num_steps)
-        print(inc_lr_until)
         inc_amount = max_lr/inc_lr_until
-        print(inc_amount)
         hold_lr_lim = int(0.6 * total_num_steps)
-        print(hold_lr_lim)
+        
     num_steps = 0
+    get_set_lr(optimizer, -max_lr) #start off the lr at 0 and increase linearly
 
     def train_epoch_deep(epoch):
         nonlocal num_steps
@@ -270,6 +267,8 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
                 wandb.log({f"Lr": lr})
             if num_steps >= hold_lr_lim:
                 scheduler.step()
+                lr = get_set_lr(optimizer)
+                wandb.log({f"Lr": lr})
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -506,7 +505,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
     checkpoint = model_data['model_state_dict']
     checkpoint = configure_bias(checkpoint)
-    model = choose_model(model_name, input.shape, target.shape, torch.zeros(1), model_data['config']).to(device)
+    model = choose_model(model_name, input.shape, torch.zeros(1), model_data['config']).to(device)
     model.load_state_dict(checkpoint)
     model.eval()
 
