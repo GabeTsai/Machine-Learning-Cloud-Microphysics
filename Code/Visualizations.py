@@ -8,7 +8,7 @@ import mpl_scatter_density
 from matplotlib.colors import LinearSegmentedColormap
 from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.CNNs.CNNDataUtils import create_CNN_dataset, min_max_denormalize
-from Models.MLP.MLPModel import MLP
+from Models.MLP.MLPModel import *
 from sklearn.metrics import r2_score
 from scipy.special import gamma
 import xarray as xr
@@ -276,7 +276,7 @@ def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_p
 
 def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name, delog = True):
     '''
-    Compare ML model predictions with Khairoutdinov & Kogan, 2000 paramaterized equation. 
+    Compare ML model predictions with Khairoutdinov & Kogan, 2000 parameterized equation. 
     '''
 
     test_dataset = torch.load(Path(model_folder_path) / f'{model_name}_test_dataset.pth')
@@ -291,7 +291,6 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name, de
     qc = np.array(inputs[:, 0])
     nc = np.array(inputs[:, 1])
 
-    
     qc = np.exp(min_max_denormalize(qc, qc_min, qc_max))
     nc = np.exp(min_max_denormalize(nc, nc_min, nc_max))
 
@@ -330,12 +329,12 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name, de
 def main():
     from Train import choose_model, test_best_config
 
-    model_name = 'MLP2'
+    model_name = 'DeepMLP'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
     #best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth
     #best_model_MLP3hl164hl232lr0.000324132680419563weight_decay7.0845415052502345e-06batch_size256max_epochs1000.pth
-    model_file_name = 'best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth'
+    model_file_name = 'best_model_DeepMLPlatent_dim128max_lr3e-05gamma0.7685825710759191batch_size128max_epochs50.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
     denorm_log_pred = True
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
@@ -344,7 +343,6 @@ def main():
     if denorm_log_pred:
         predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True)
     
-    np.savetxt('/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/Visualizations/MLP3/true_values.csv', np.sort(true_values.flatten()), delimiter = 'csv')
     density_plot(predictions, true_values, model_name, '')
     scatter_plot(predictions, true_values, model_name, '')
     compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)

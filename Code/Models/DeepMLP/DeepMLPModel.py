@@ -1,7 +1,7 @@
 import torch
 import sys
 sys.path.append('../')
-from Layers import *
+from Models.Layers import *
 
 class Processor(nn.Module):
     def __init__(self, latent_dim, num_blocks):

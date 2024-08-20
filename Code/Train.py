@@ -2,15 +2,17 @@ import torch
 import torch.nn as nn
 import torch.optim
 import torch.utils.data
+from torch.optim.lr_scheduler import ExponentialLR
+
 import numpy as np
 from pathlib import Path
 from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
-from Models.MLP.MLPModel import MLP
+from Models.MLP.MLPModel import *
 from Models.MLP.MLPDataUtils import create_MLP_dataset
 from Models.LSTM.LSTMDataUtils import *
 from Models.LSTM.LSTMModel import LSTM
 from Models.GEN import *
-from Models.DeepMLP import DeepMLP
+from Models.DeepMLP.DeepMLPModel import DeepMLP
 from Models import Layers
 
 from Visualizations import plot_losses
@@ -88,8 +90,8 @@ def choose_model(model_name, input_dim, output_bias, config):
     Raises:
         ValueError: If the model name is not recognized.
     """
-    if 'MLP' in model_name:
-        return MLP(input_dim[0], output_bias, config["hl1"], config["hl2"])
+    if 'MLP' in model_name and 'Deep' not in model_name:
+        return MLPBase(input_dim[0], output_bias, config["hl1"], config["hl2"])
     elif model_name == 'LSTM':
         return LSTM(input_dim[1], config["hidden_dim"], config["num_layers"], output_bias) #inputs: (max_seq_len, num_features)
     elif model_name == 'GEN':
@@ -101,7 +103,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         decoder = MLP([latent_dim, latent_dim, 1], activation = nn.SiLU(), output_bias = output_bias)
         return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
     elif model_name == 'DeepMLP':
-        return DeepMLP(input_dim[1], config["latent_dim"], 1, output_bias, num_blocks = 5)
+        return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = 5)
     else:
         raise ValueError('Model name not recognized.')
     
@@ -117,7 +119,7 @@ def define_hyperparameter_search_space(model_name, device):
         dict: The hyperparameter search space.
     """
     
-    if 'MLP' in model_name:
+    if 'MLP' in model_name and 'Deep' not in model_name:
         if str(device) == 'cuda':
             batch_size_list = [128,256,512,1024]
         else:
@@ -142,18 +144,18 @@ def define_hyperparameter_search_space(model_name, device):
     elif model_name == 'GEN':
         return {
             "latent_dim": 512,
-            "lr": 0,
+            "max_lr": tune.loguniform(1e-4, 3e-3),
             "weight_decay": tune.loguniform(1e-3, 1e-1),
             "batch_size": 64,
             "max_epochs": 10
         }
     elif model_name == 'DeepMLP':
         return {
-            "latent_dim": 128,
-            "lr": 0,
-            "weight_decay": tune.loguniform(1e-3, 1e-1),
-            "batch_size": 64,
-            "max_epochs": 10
+            "latent_dim": tune.choice([128, 256, 512]),
+            "max_lr": 3e-5,
+            "gamma": tune.uniform(0.5, 0.95),
+            "batch_size": 128,
+            "max_epochs": 50
         }
     else:
         return {}
@@ -196,7 +198,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
     else:
         return data  # input_data, target_data, and length_data for models like LSTM
 
-def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, decay_lr_at, start_epoch, model_name):
+def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, start_epoch, model_name, scheduler = None):
     '''
     Train the model on a single train/test/val split until validation loss has not reached a new minimum in early_stop epochs.
 
@@ -207,7 +209,6 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     :param val_loader: DataLoader for validation data
     :param early_stop: number of epochs to stop if no improvement
     :param max_num_epochs: maximum number of epochs to train
-    :param decay_lr_at: list of epochs to decay learning rate
     :param start_epoch: starting epoch
     :param model_name: name of model
     :param is_lstm: boolean flag indicating if the model is an LSTM
@@ -239,7 +240,24 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         return epoch_loss / len(train_loader)
 
+    def get_set_lr(optimizer, inc = 0):
+        for param_group in optimizer.param_groups:
+            param_group['lr'] += inc
+            return param_group['lr']
+
+    if model_name == 'DeepMLP' or model_name == 'GEN':
+        max_lr = get_set_lr(optimizer)
+        total_num_steps = len(train_loader) * max_num_epochs
+        inc_lr_until = int(0.1 * total_num_steps)
+        print(inc_lr_until)
+        inc_amount = max_lr/inc_lr_until
+        print(inc_amount)
+        hold_lr_lim = int(0.6 * total_num_steps)
+        print(hold_lr_lim)
+    num_steps = 0
+
     def train_epoch_deep(epoch):
+        nonlocal num_steps
         model.train()
         epoch_loss = 0.0
         
@@ -247,6 +265,11 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         accum_batch_loss = 0
         num_batch = 100
         for inputs, targets in train_loader:
+            if num_steps <= inc_lr_until - 1:
+                lr = get_set_lr(optimizer, inc_amount)
+                wandb.log({f"Lr": lr})
+            if num_steps >= hold_lr_lim:
+                scheduler.step()
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -260,6 +283,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
                 wandb.log({f"Train loss over {num_batch} batches": accum_batch_loss/num_batch})
                 accum_batch_loss = 0
             batch += 1
+            num_steps += 1
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1) #clip gradients to -1 to 1
         return epoch_loss / len(train_loader)
 
@@ -323,9 +347,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     epoch = start_epoch
     early_stop_counter = 0
 
-    while early_stop_counter < early_stop and epoch < max_num_epochs:
-        if epoch in decay_lr_at:
-            decay_lr(optimizer, 0.1)
+    while epoch < max_num_epochs:
 
         avg_train_loss = train_epoch(epoch)
         train_losses.append(avg_train_loss)
@@ -377,13 +399,13 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
             val_dataset, batch_size = int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
     criterion = nn.MSELoss()
-    optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
     if model_name == 'GEN' or model_name == 'DeepMLP':
-        #TO DO: 
-
+        optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"])
+        scheduler = ExponentialLR(optimizer, gamma = config["gamma"])
+    else:
+        optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
     start_epoch = 0
     early_stop = int(config["max_epochs"]/5)
-    decay_lr_at = []
 
     wandb.init(
       project=f"{model_name}",
@@ -392,7 +414,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
 
     wandb.log(config)
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
-                                        config["max_epochs"], decay_lr_at, start_epoch, model_name)
+                                        config["max_epochs"], start_epoch, model_name, scheduler = scheduler)
 
     model_key = ''.join(f'{key}{str(item)}' for key, item in config.items()) # Create unique file key based on model config
     model_data = {
@@ -537,9 +559,9 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
     # model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
 
     cpus = os.cpu_count()
-    num_processes = 1
+    num_processes = 2
     num_gpus = torch.cuda.device_count()
-    num_workers = 16 if cpus/num_processes > 16 else cpus/num_processes
+    num_workers = 16 if cpus/num_processes > 16 else int(cpus/num_processes)
 
     train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)
     config = define_hyperparameter_search_space(model_name, device)
@@ -561,8 +583,8 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
         param_space=config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=1,
-            max_concurrent_trials=1
+            num_samples=10,
+            max_concurrent_trials=num_processes
         ), 
         run_config=ray.air.config.RunConfig(
             name = "tune_model",
@@ -592,7 +614,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
 def main():
     data_folder_path = '../Data/'
     checkpoint_path = None
-    model_name = 'GEN'
+    model_name = 'DeepMLP'
     single_split = True
     
     tune_model(data_folder_path, checkpoint_path, model_name, single_split)

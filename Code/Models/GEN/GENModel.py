@@ -6,10 +6,10 @@ from torch_geometric.data import Data
 import torch_geometric.nn as pyg_nn
 from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
 from torch_scatter import scatter
-from Icosphere import IcosphereMesh, IcosphereTetrahedron
+from .Icosphere import IcosphereMesh, IcosphereTetrahedron
 import sys
 sys.path.append('../')
-from Layers import *
+from Models.Layers import *
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

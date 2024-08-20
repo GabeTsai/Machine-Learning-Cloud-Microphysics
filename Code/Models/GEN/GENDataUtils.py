@@ -45,8 +45,8 @@ def create_GEN_dataset(datamap, log_map):
             data_list[i] = np.log1p(data_list[i])
     
     input_data = np.stack(data_list[:-1], axis=1) #exclude target data
-    input_data = min_max_normalize(input_data, (0))
-    target_data = min_max_normalize(data_list[-1])
+    input_data = standardize(input_data, (0))
+    target_data = standardize(data_list[-1])
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
@@ -63,6 +63,7 @@ def create_GEN_dataset_subset(data_map, log_map, percent):
     target_data_subset = target_data[p][:subset_size]
 
     return input_data_subset, target_data_subset
+    
 def main():
     data_file_path = '../../../Data/00d-03h-00m-00s-000ms.h5'
     log_map = {

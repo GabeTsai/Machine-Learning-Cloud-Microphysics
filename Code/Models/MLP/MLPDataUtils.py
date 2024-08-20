@@ -10,7 +10,7 @@ from Visualizations import histogram
 
 from pathlib import Path
 
-def prepare_dataset_MLP(data_map, include_qr_nr = True):
+def prepare_dataset_MLP(data_map, include_qr_nr = False):
     '''
     Create the input and target datasets. Return as np arrays.
     '''
@@ -21,7 +21,6 @@ def prepare_dataset_MLP(data_map, include_qr_nr = True):
     if include_qr_nr:
         qr_autoconv_cloud = np.array(data_map['qr_autoconv_cloud']).flatten().transpose()
         nr_autoconv_cloud = np.array(data_map['nr_autoconv_cloud']).flatten().transpose()
-        auto_cldmsink_b_cloud = np.array(data_map['auto_cldmsink_b_cloud']).flatten().transpose()
         input_data = np.stack((qc_autoconv_cloud, nc_autoconv_cloud, 
                                 qr_autoconv_cloud, nr_autoconv_cloud), axis = 1)
     else:
