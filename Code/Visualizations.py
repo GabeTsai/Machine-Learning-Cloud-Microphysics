@@ -246,7 +246,7 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
     density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis)
-    density.set_clim(0, 30) 
+    # density.set_clim(0, 30) 
     fig.colorbar(density, label = 'Number of points per pixel') 
     max_value = np.max(true_values)
 
@@ -270,6 +270,16 @@ def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_p
     plt.xlabel('auto_cldmsink_b_cloud (kg/kg/s)')
     plt.ylabel('Frequency')
     plt.title(f'{plot_name}')
+    plt.legend()
+    plt.show()
+    plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
+
+def histogram_single(data, data_name, model_name, plot_name, vis_folder_path):
+    plt.clf()
+    plt.hist(data, bins = 200, alpha = 0.5, label = data_name)
+    plt.xlabel(data_name)
+    plt.ylabel('Frequency')
+    plt.title(f'{data_name}')
     plt.legend()
     plt.show()
     plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
