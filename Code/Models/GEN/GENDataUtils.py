@@ -45,8 +45,9 @@ def create_GEN_dataset(datamap, log_map):
             data_list[i] = np.log1p(data_list[i])
     
     input_data = np.stack(data_list[:-1], axis=1) #exclude target data
+    target_data = data_list[-1]
     input_data = standardize(input_data, (0))
-    target_data = standardize(data_list[-1])
+    target_data = standardize(target_data)
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
@@ -74,10 +75,10 @@ def main():
     data_map = prepare_hdf_dataset(data_file_path)
     input_data, target_data = create_GEN_dataset_subset(data_map, log_map, 0.2)
     print(input_data.shape, target_data.shape)
-    # histogram(target_data, target_data, 'GEN', 'GENTargetValues', '../../../Visualizations')
-    # histogram(input_data[:, 0], input_data[:, 0], 'GEN', 'GENqc', '../../../Visualizations')
-    # histogram(input_data[:, 1], input_data[:, 1], 'GEN', 'GENnc', '../../../Visualizations')
-    # histogram(input_data[:, 2], input_data[:, 2], 'GEN', 'GENtke', '../../../Visualizations')
+    histogram(target_data, target_data, 'GEN', 'GENTargetValues', '../../../Visualizations')
+    histogram(input_data[:, 0], input_data[:, 0], 'GEN', 'GENqc', '../../../Visualizations')
+    histogram(input_data[:, 1], input_data[:, 1], 'GEN', 'GENnc', '../../../Visualizations')
+    histogram(input_data[:, 2], input_data[:, 2], 'GEN', 'GENtke', '../../../Visualizations')
     
 
 if __name__ == '__main__':
