@@ -32,7 +32,7 @@ def prepare_dataset_MLP(data_map, include_qr_nr = False):
     print(np.count_nonzero(target_data == 0))
     return input_data, target_data
 
-def concat_data(data_maps, model_name, model_folder_path, include_qr_nr):
+def concat_data(data_maps, model_name, model_folder_path, data_name = '', include_qr_nr = False):
     '''
     Concatenate data from data maps into tensors
     :param data_maps: list of data maps
@@ -53,7 +53,7 @@ def concat_data(data_maps, model_name, model_folder_path, include_qr_nr):
     target_data = target_data[filter_mask]
     input_data = input_data[filter_mask]
 
-    # save_data_info(input_data, target_data, model_folder_path, model_name)
+    save_data_info(input_data, target_data, model_folder_path, model_name, data_name)
 
     dims = (0)
     input_data = min_max_normalize(input_data, dims)
