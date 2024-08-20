@@ -311,7 +311,7 @@ def create_deep_dataset(datamap, log_map):
     # Apply the filter mask and log transform where necessary
     for i, (data, key) in enumerate(zip(data_list, log_map)):
         data_list[i] = data[filter_mask]
-        if log_map[key]:
+        if log_map[key]: 
             data_list[i] = np.log1p(data_list[i])
     
     input_data = np.stack(data_list[:-1], axis=1) #exclude target data
