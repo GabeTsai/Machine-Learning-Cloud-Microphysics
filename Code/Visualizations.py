@@ -327,7 +327,7 @@ def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name, de
     # histogram(eq_autoconv_rate, true_values, model_name, 'KK2000 vs True Values', f"../Visualizations") 
 
 def main():
-    from Train import choose_model, test_best_config
+    from Train import test_best_config
 
     model_name = 'DeepMLP'
     model_folder_path = f'../SavedModels/{model_name}'

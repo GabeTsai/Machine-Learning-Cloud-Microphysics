@@ -93,6 +93,20 @@ def standardize(data, dims = None):
         std = np.std(data)
     return (data - mean) / std
 
+def destandardize(data, mean, std):
+    """
+    Destandardize data using mean and standard deviation.
+
+    Args:
+        data (np.array): Standardized data to destandardize.
+        mean (float): Mean of the original data.
+        std (float): Standard deviation of the original data.
+
+    Returns:
+        np.array: Destandardized data.
+    """
+    return data * std + mean
+
 def find_nonzero_threshold(dataset, num_values, hdf=False):
     """
     Return list of indices of height levels with more than num_values non-zero values.
