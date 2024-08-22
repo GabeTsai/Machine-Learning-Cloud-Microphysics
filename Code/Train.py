@@ -6,18 +6,13 @@ from torch.optim.lr_scheduler import ExponentialLR
 
 import numpy as np
 from pathlib import Path
-from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
 from Models.MLP.MLPModel import *
-from Models.MLP.MLPDataUtils import create_MLP_dataset
-from Models.LSTM.LSTMDataUtils import *
-from Models.LSTM.LSTMModel import LSTM
 from Models.GEN import *
 from Models.DeepMLP.DeepMLPModel import DeepMLP
 from Models import Layers
+from DataUtils import create_model_dataset, save_data_info
 
-from Visualizations import plot_losses
 from sklearn.model_selection import KFold
-import pandas as pd
 import ray
 from ray import tune, train
 from ray.tune.schedulers import ASHAScheduler
@@ -55,22 +50,6 @@ def reset_weights(model):
         if hasattr(layer, 'reset_parameters'):
             layer.reset_parameters()
 
-def save_checkpoint(epoch, model, model_name, optimizer, folder, fold):
-    """
-    Save model checkpoint.
-
-    Args:
-        epoch (int): The epoch number.
-        model (torch.nn.Module): The model object.
-        model_name (str): The name of the model.
-        optimizer (torch.optim.Optimizer): The optimizer object.
-        folder (str): The folder where the checkpoint will be saved.
-        fold (int): The fold number.
-    """
-    state = {'epoch': epoch, 'model': model, 'optimizer': optimizer}
-    filename = f'{model_name}{fold}.pth.tar'
-    torch.save(state, Path(folder) / filename)
-
 def choose_model(model_name, input_dim, output_bias, config):
     """
     Choose model based on model name.
@@ -87,10 +66,8 @@ def choose_model(model_name, input_dim, output_bias, config):
     Raises:
         ValueError: If the model name is not recognized.
     """
-    if 'MLP' in model_name and 'Deep' not in model_name:
+    if model_name == 'MLP3':
         return MLPBase(input_dim[0], output_bias, config["hl1"], config["hl2"])
-    elif model_name == 'LSTM':
-        return LSTM(input_dim[1], config["hidden_dim"], config["num_layers"], output_bias) #inputs: (max_seq_len, num_features)
     elif model_name == 'GEN':
         latent_dim = config["latent_dim"]
         encoder = MLP([input_dim[0], latent_dim, latent_dim], activation = nn.SiLU())
@@ -117,26 +94,13 @@ def define_hyperparameter_search_space(model_name, device):
     """
     
     if 'MLP' in model_name and 'Deep' not in model_name:
-        if str(device) == 'cuda':
-            batch_size_list = [128,256,512,1024]
-        else:
-            batch_size_list = [16, 32, 64]
         return {
         "hl1": tune.sample_from(lambda _: 2 ** np.random.randint(5, 8)),
         "hl2": tune.sample_from(lambda _: 2 ** np.random.randint(2, 6)),
         "lr": tune.loguniform(1e-5, 1e-3),
         "weight_decay": tune.loguniform(1e-6, 1e-4),
-        "batch_size": tune.choice(batch_size_list),
+        "batch_size": tune.choice([128,256,512,1024]),
         "max_epochs": 1000
-        }
-    elif model_name == 'LSTM': 
-        return {
-            "hidden_dim": tune.sample_from(lambda _: 2 ** np.random.randint(4, 7)),
-            "num_layers": tune.choice([1, 2, 3, 4]),
-            "lr": tune.loguniform(1e-5, 1e-3),
-            "weight_decay": tune.loguniform(1e-6, 1e-4),
-            "batch_size": tune.choice([128, 256, 512]),
-            "max_epochs": 500
         }
     elif model_name == 'GEN':
         return {
@@ -148,8 +112,8 @@ def define_hyperparameter_search_space(model_name, device):
         }
     elif model_name == 'DeepMLP':
         return {
-            "latent_dim": tune.randint(64, 512),
-            "num_blocks": tune.choice([3,4,5]),
+            "latent_dim": tune.randint(64, 256),
+            "num_blocks": tune.choice([2,3,4,5]),
             "max_lr": 3e-5,
             "gamma": tune.uniform(0.5, 0.95),
             "batch_size": 32,
@@ -157,44 +121,6 @@ def define_hyperparameter_search_space(model_name, device):
         }
     else:
         return {}
-
-def load_data(data_folder_path, model_folder_path, model_name):
-    '''
-    Load data for specific type of model from data folder path
-    '''
-    def create_MLP_dataset_wrapper():
-        return create_MLP_dataset(data_folder_path, model_name, model_folder_path, include_qr_nr=False)
-
-    def create_LSTM_dataset_wrapper():
-        return create_LSTM_dataset(data_folder_path, model_folder_path, model_name)
-
-    def create_deep_dataset_wrapper():
-        log_map = {
-            'qc_autoconv': True,
-            'nc_autoconv': False,
-            'tke_sgs': True,
-            'auto_cldmsink_b': True}
-        data_file_name = '00d-03h-00m-00s-000ms.h5'
-        data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
-        return create_deep_dataset_subset(data_map, log_map, percent = 1)
-    
-    model_data_loaders = {
-        'MLP2': create_MLP_dataset_wrapper,
-        'MLP3': create_MLP_dataset_wrapper,
-        'LSTM': create_LSTM_dataset_wrapper,
-        'GEN': create_deep_dataset_wrapper,
-        'DeepMLP': create_deep_dataset_wrapper
-    }
-
-    if model_name not in model_data_loaders:
-        raise ValueError(f"Unsupported model_name: {model_name}")
-
-    data = model_data_loaders[model_name]()
-
-    if data[1] is None:
-        return data[0]  # Only input_data and target_data for models like MLP2
-    else:
-        return data  # input_data, target_data, and length_data for models like LSTM
 
 def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, max_num_epochs, start_epoch, model_name, scheduler = None):
     '''
@@ -209,21 +135,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     :param max_num_epochs: maximum number of epochs to train
     :param start_epoch: starting epoch
     :param model_name: name of model
-    :param is_lstm: boolean flag indicating if the model is an LSTM
     '''
-
-    def train_epoch_lstm():
-        model.train()
-        epoch_loss = 0.0
-        for inputs, targets, lengths in train_loader:
-            inputs, targets, lengths = inputs.to(device), targets.to(device), lengths.cpu()
-            optimizer.zero_grad()
-            outputs = model(inputs, lengths)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        return epoch_loss / len(train_loader)
 
     def train_epoch_default():
         model.train()
@@ -306,17 +218,6 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
                 batch += 1
         return val_epoch_loss / len(val_loader)
 
-    def validate_epoch_lstm():
-        model.eval()
-        val_epoch_loss = 0.0
-        with torch.no_grad():
-            for inputs, targets, lengths in val_loader:
-                inputs, targets, lengths = inputs.to(device), targets.to(device), lengths.cpu()
-                outputs = model(inputs, lengths)
-                loss = criterion(outputs, targets)
-                val_epoch_loss += loss.item()
-        return val_epoch_loss / len(val_loader)
-
     def validate_epoch_default():
         model.eval()
         val_epoch_loss = 0.0
@@ -329,10 +230,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         return val_epoch_loss / len(val_loader)
 
     # Choose the appropriate functions
-    if 'LSTM' in model_name:
-        train_epoch = train_epoch_lstm
-        validate_epoch = validate_epoch_lstm
-    elif 'GEN' or 'DeepMLP' in model_name:
+    if 'GEN' or 'DeepMLP' in model_name:
         train_epoch = train_epoch_deep
         validate_epoch = validate_epoch_deep
     else:
@@ -386,11 +284,20 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
 
     model = choose_model(model_name, input.shape, output_bias, config).to(device)
 
-    val_percent = 0.2
+    val_percent = 1/9 #Since we already reserved 10 percent of data for testing 
     val_size = int(val_percent * len(dataset))
     train_size = len(dataset) - val_size
+    
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    
+    train_inputs = [item[0] for item in train_dataset]
+    train_targets = [item[1] for item in train_dataset]
 
+    train_inputs = np.stack(train_inputs)
+    train_targets = np.stack(train_targets)
+
+    #Save data for undoing transforms (use train data statistics to prevent leakage)
+    save_data_info(train_inputs, train_targets, model_folder_path, model_name)
     train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size= int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
     
@@ -518,37 +425,6 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
-def create_datasets(data_folder_path, model_folder_path, model_name):
-    """
-    Returns train/val dataset and saves test dataset as .pth file depending on model. 
-    """
-    data = load_data(data_folder_path, model_folder_path, model_name)
-    if model_name == 'LSTM': 
-        seqs, target_data, length_data = data
-        test_seqs, test_target_data, test_len_data = create_LSTM_test_data(seqs, target_data, length_data)
-        eq_inputs, eq_targets = seq_to_single(test_seqs, test_target_data)
-        eq_test_dataset = torch.utils.data.TensorDataset(eq_inputs, eq_targets) 
-
-        torch.save(eq_test_dataset, Path(model_folder_path)/ f'{model_name}_eq_test_dataset.pth')
-
-        train_val_dataset = VariableSeqLenDataset(seqs, target_data, length_data)
-        test_dataset = VariableSeqLenDataset(test_seqs, test_target_data, test_len_data)
-
-        torch.save(eq_test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
-
-    else:
-        input_data, target_data = data
-        dataset = torch.utils.data.TensorDataset(input_data, target_data)
-
-        test_percentage = 0.1 # 10% of data used for testing
-        test_size = int(len(input_data) * test_percentage)
-        k_fold_train_size = len(input_data) - test_size
-
-        train_val_dataset, test_dataset = torch.utils.data.random_split(dataset, [k_fold_train_size, test_size])
-        
-        torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
-    return train_val_dataset
-
 def tune_model(data_folder_path, model_folder_path, model_name, single_split = False):
     wandb.login()
     train_func = train_k_fold
@@ -558,11 +434,11 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
     # model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
 
     cpus = os.cpu_count()
-    num_processes = 2
+    num_processes = 4
     num_gpus = torch.cuda.device_count()
     num_workers = 16 if cpus/num_processes > 16 else int(cpus/num_processes)
 
-    train_val_dataset = create_datasets(data_folder_path, model_folder_path, model_name)
+    train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name)
     config = define_hyperparameter_search_space(model_name, device)
     
     scheduler = ASHAScheduler(
@@ -611,7 +487,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
         json.dump(best_settings_map, f)
 
 def main():
-    data_folder_path = '../Data/'
+    data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
     model_name = 'DeepMLP'
     single_split = True

@@ -1,4 +1,5 @@
 import xarray as xr
+import netCDF4
 import numpy as np
 import torch
 import h5py
@@ -6,13 +7,11 @@ from pathlib import Path
 import os
 import json
 
-#Open file, initialize data arrays
+#Open file, initialize data arrays 
 nc_cloud_var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud','auto_cldmsink_b_cloud']
 hdf_cloud_var_names = ['qc_autoconv', 'nc_autoconv', 'auto_cldmsink_b']
 turb_var_names = ['tke_sgs']
-NC_THRESHOLD_VALUES = 0.62 * 721
-HDF_THRESHOLD_PERCENTAGE = 0.95
-THRESHOLD = 1e-6
+NC_QC_THRESHOLD = 1e-20
 
 def remove_outliers(arr):
     """
@@ -107,31 +106,18 @@ def destandardize(data, mean, std):
     """
     return data * std + mean
 
-def find_nonzero_threshold(dataset, num_values, hdf=False):
+def find_nonzero_threshold(dataset, threshold):
     """
-    Return list of indices of height levels with more than num_values non-zero values.
+    Return list of indices of data that are more than threshold. 
 
     Args:
         dataset (ndarray): Dataset to search through.
-        num_values (int): Threshold number of non-zero values.
-        hdf (bool, optional): Boolean flag indicating whether dataset is from HDF5 file. Defaults to False.
+        threshold (float): Threshold value used for marking index_list
 
     Returns:
-        list: List of indices of height levels meeting the criteria.
+        list: Mask of indices of height levels meeting the criteria.
     """
-    index_list = []
-    if hdf:
-        print(dataset.shape)
-        for i in range(dataset.shape[2]):
-            if np.count_nonzero(dataset[:, :, i] >= THRESHOLD) > num_values:
-                index_list.append(i)
-    else:
-        for i in range(dataset.shape[1]):
-            array = dataset.isel(z=i).data
-            count = np.count_nonzero(array >= THRESHOLD)
-            if count > num_values:
-                index_list.append(i)
-    return index_list
+    return dataset >= threshold
 
 def extract_data(dataset, index_list, dim=1):
     """
@@ -165,22 +151,6 @@ def log_ignore_zero(arr):
     arr_copy = np.nan_to_num(arr_copy, nan=0)
     return arr_copy
 
-def prepare_dataset(dataset, index_list):
-    """
-    Log transform, normalize, and return data array.
-
-    Args:
-        dataset (xarray.Dataset): Dataset to prepare.
-        index_list (list): List of indices specifying height levels to include.
-
-    Returns:
-        list: Prepared data array.
-    """
-    dataset_copy = dataset.values
-    dataset_copy = extract_data(dataset_copy, index_list)
-    dataset_copy = log_ignore_zero(dataset_copy)
-    return dataset_copy.tolist()
-
 def create_data_map(data_file_path, hdf=False):
     """
     Create map to store all data arrays (input and target arrays).
@@ -193,13 +163,16 @@ def create_data_map(data_file_path, hdf=False):
         dict: Dictionary containing prepared data arrays.
     """
     cloud_ds = xr.open_dataset(data_file_path, group='DiagnosticsClouds/profiles')
-    index_list = find_nonzero_threshold(cloud_ds[nc_cloud_var_names[0]], NC_THRESHOLD_VALUES)
+    turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
+
+    mask = find_nonzero_threshold(np.array(cloud_ds[nc_cloud_var_names[0]]).flatten(), NC_QC_THRESHOLD)
     data_map = {}
     for i in range(len(nc_cloud_var_names)):
-        data_map[nc_cloud_var_names[i]] = prepare_dataset(cloud_ds[nc_cloud_var_names[i]], index_list)
-    turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
+        data = np.array(cloud_ds[nc_cloud_var_names[i]]).flatten()
+        data_map[nc_cloud_var_names[i]] = data[mask]
     for i in range(len(turb_var_names)):
-        data_map[turb_var_names[i]] = prepare_dataset(turb_ds[turb_var_names[i]], index_list)
+        data = np.array(turb_ds[turb_var_names[i]]).flatten()
+        data_map[turb_var_names[i]] = data[mask]
     return data_map
 
 def filter_data(qc):
@@ -280,9 +253,9 @@ def prepare_hdf_dataset(data_file_path):
         data_map[turb_var_names[0]] = load_hdf_dataset(turb_var_names[0], index_list, f)
     return data_map
 
-def create_deep_dataset(datamap, log_map):
+def create_h5_dataset(datamap, log_map):
     '''
-    Extract arrays for a deep model.
+    Extract arrays for a model from datamap obtained from h5 file
 
     Args:
         datamap (dict): Dictionary mapping variable names to data arrays.
@@ -322,7 +295,7 @@ def create_deep_dataset(datamap, log_map):
 
     return torch.FloatTensor(input_data), torch.FloatTensor(target_data).unsqueeze(1)
 
-def create_deep_dataset_subset(data_map, log_map, percent):
+def create_h5_dataset_subset(data_map, log_map, percent):
     """
     Use subset of data for faster training
     """
@@ -335,6 +308,50 @@ def create_deep_dataset_subset(data_map, log_map, percent):
     target_data_subset = target_data[p][:subset_size]
 
     return input_data_subset, target_data_subset
+
+def load_data(data_folder_path, model_folder_path, model_name):
+    '''
+    Load data for specific type of model from data folder path
+    '''
+    from Models.MLP.MLPDataUtils import create_MLP_dataset
+    from Models.GEN import GENModel, Icosphere
+    from Models.DeepMLP.DeepMLPModel import DeepMLP
+    def create_MLP_dataset_wrapper():
+        return create_MLP_dataset(data_folder_path, model_name, model_folder_path)
+
+    def create_deep_dataset_wrapper():
+        log_map = {
+            'qc_autoconv': True,
+            'nc_autoconv': False,
+            'tke_sgs': True,
+            'auto_cldmsink_b': True}
+        data_file_name = '00d-03h-00m-00s-000ms.h5'
+        data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
+        return create_deep_dataset_subset(data_map, log_map, percent = 1)
+    
+    model_data_loaders = {
+        'MLP3': create_MLP_dataset_wrapper,
+        'GEN': create_deep_dataset_wrapper,
+        'DeepMLP': create_MLP_dataset_wrapper
+    }
+
+    if model_name not in model_data_loaders:
+        raise ValueError(f"Unsupported model_name: {model_name}")
+
+    data = model_data_loaders[model_name]()
+
+    return data
+
+def create_model_dataset(data_folder_path, model_folder_path, model_name):
+    """
+    Returns train/val dataset and saves test dataset as .pth file depending on model. 
+    """
+    data = load_data(data_folder_path, model_folder_path, model_name)
+
+    input_data, target_data = data
+    train_val_dataset = torch.utils.data.TensorDataset(input_data, target_data)
+        
+    return train_val_dataset
 
 def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name=''):
     """

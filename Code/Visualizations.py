@@ -6,8 +6,7 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import mpl_scatter_density
 from matplotlib.colors import LinearSegmentedColormap
-from Models.CNNs.CNNModels import SimpleCNN, LargerCNN
-from Models.CNNs.CNNDataUtils import create_CNN_dataset, min_max_denormalize
+from DataUtils import *
 from Models.MLP.MLPModel import *
 from sklearn.metrics import r2_score
 from scipy.special import gamma
