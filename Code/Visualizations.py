@@ -249,6 +249,7 @@ def main():
     #     predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True)
     predictions = np.exp(destandardize_output(model_folder_path, model_name, predictions))
     true_values = np.exp(destandardize_output(model_folder_path, model_name, true_values))
+    print(pred_metrics(true_values, predictions))
     density_plot(predictions, true_values, model_name, '')
     scatter_plot(predictions, true_values, model_name, '')
     # compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)

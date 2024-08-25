@@ -424,4 +424,17 @@ def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name=
         json.dump(data_info, f)
 
 def pred_metrics(predictions, targets):
-    
+    """
+    Calculate various metrics for model predictions.
+
+    Args:
+        predictions (np.array): Model predictions.
+        targets (np.array): Target values.
+
+    Returns:
+        dict: Dictionary containing various metrics.
+    """
+    metrics = {}
+    metrics['r2'] = r2_score(targets, predictions)
+    metrics['rmse'] = np.sqrt(np.mean((predictions - targets) ** 2))
+    return metrics 
