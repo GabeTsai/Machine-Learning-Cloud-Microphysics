@@ -8,7 +8,6 @@ import mpl_scatter_density
 from matplotlib.colors import LinearSegmentedColormap
 from DataUtils import *
 from Models.MLP.MLPModel import *
-from sklearn.metrics import r2_score
 from scipy.special import gamma
 import xarray as xr
 from pathlib import Path
@@ -28,7 +27,6 @@ def predict(model, test_dataset):
     predictions_np = predictions.detach().numpy()
     
     return predictions_np, true_values_np
-
 
 def predict_fold(model, fold, inputs, targets, test_indices):
     '''
@@ -70,7 +68,7 @@ def denormalize_delog(arr, arr_min, arr_max, delog = True):
     '''
     denorm_arr = min_max_denormalize(arr, arr_min, arr_max)
     if delog:
-        denorm_arr = np.exp(denorm_arr, out=np.zeros_like(arr, dtype=np.float64), where = arr != 0)
+        denorm_arr = np.log(denorm_arr)
     return denorm_arr
 
 def denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True):
@@ -79,111 +77,12 @@ def denormalize_predictions(model_folder_path, model_name, predictions, true_val
     '''
     with open(Path(model_folder_path) / f'{model_name}_target_data_map.json', 'r') as f:
         target_data_map = json.load(f)
+    
     min_val = target_data_map['min']
     max_val = target_data_map['max']
     predictions = denormalize_delog(predictions, min_val, max_val, delog)
     true_values = denormalize_delog(true_values, min_val, max_val, delog)
     return predictions, true_values
-
-def plot_pred_single_sample_time(true_values, predicted_values, i, time, height_map, ax):
-    '''
-    Plot predicted and true values for a single sample using scatterplot
-    '''
-    true_value_slice = true_values[i]
-    predicted_value_slice = predicted_values[i]
-    height_list = []
-    for _, height in height_map.items():
-        height_list.append(height)
-    
-    # fig, ax = plt.subplots(figsize=(10, 10))  # Create a Figure and an Axes
-    ax.scatter(true_value_slice, height_list, label='True values', color='red', s = 10)
-    ax.scatter(predicted_value_slice, height_list, label='Predicted values', color='blue', s = 10)
-
-    ax.set_title('Time ' + str(time) + 's', fontsize = 'small')
-    ax.set_xlabel('Height level (m)', fontsize = 'small')
-    ax.set_ylabel('auto_cldmsink_b_cloud (kg/kg/s)', fontsize = 'small')
-    ax.tick_params(axis='both', which='major', labelsize= 'small')
-    ax.tick_params(axis='both', which='minor', labelsize= 'small')
-
-    ax.legend(fontsize = 'small')
-
-def plot_pred_single_sample_height(true_values, predicted_values, i, time_list, time_indices, height_map, ax):
-    '''
-    Plot predicted and true values for a single sample using scatterplot
-    '''
-    true_value_slice = true_values[:, i]
-    
-    predicted_value_slice = predicted_values[:, i]
-    height = 0
-    count = 0
-    time_list_plot = []
-    for _, h in height_map.items():
-        if count == i:
-            height = h
-            break
-        count += 1
-    for time in time_indices:
-        time_list_plot.append(time_list[time])
-    ax.scatter(time_list_plot, true_value_slice, label='True values', color='red', s = 10)
-    ax.scatter(time_list_plot, predicted_value_slice, label='Predicted values', color='blue', s = 10)
-
-    ax.set_title('Height level ' + str(height), fontsize = 'small')
-    ax.set_xlabel('Time (s)', fontsize = 'small')
-    ax.set_ylabel('auto_cldmsink_b_cloud (kg/kg/s)', fontsize = 'small')
-    ax.tick_params(axis='both', which='major', labelsize= 'small')
-    ax.tick_params(axis='both', which='minor', labelsize= 'small')
-
-    ax.legend(fontsize = 'small')
-    plt.show()
-
-def plot_multiple_samples(true_values, predicted_values, model, time_list, height_map, time_indices):
-    '''
-    Plot predicted and true values for multiple samples using scatterplot
-    '''
-    fig, axs = plt.subplots(nrows = 3, ncols = 3, figsize = (30, 20))
-
-    axs = axs.flatten()
-    for i, ax in enumerate(axs):
-        time = time_list[time_indices[i * 5]]
-        plot_pred_single_sample_time(true_values, predicted_values, i * 5, time, height_map, ax)
-    
-    plt.tight_layout()
-    plt.subplots_adjust(top=0.95, bottom=0.05, left=0.05, right=0.95, hspace=0.3, wspace=0.3)
-    plt.show()
-
-def heat_map(true_values, predicted_values):
-    '''
-    Plot a heatmap of the true and predicted values
-    '''
-    diff = np.transpose(np.abs(true_values - predicted_values))
-    plt.figure(figsize=(10, 10))
-    plt.imshow(diff, cmap='coolwarm', interpolation = 'none')
-    plt.colorbar(label = 'Difference (log min-max normalized)')
-    plt.xlabel('Time')
-    plt.ylabel('Height level')
-    plt.gca().invert_yaxis()
-    plt.show()
-
-def setup_CNN_Fold_predictions(model, data_folder, data_file, fold, model_folder_path, model_name):
-    '''
-    Setup the CNN model and data for predictions
-    '''
-    with open(Path(data_folder) / 'height.json', 'r') as f:
-        height_map = json.load(f)
-    cloud_ds = xr.open_dataset(Path(data_folder) / data_file, group = 'DiagnosticsClouds/profiles')
-
-    with open(Path(model_folder_path) / 'test_indices.json', 'r') as f:
-        test_indices = json.load(f)  # Load the test indices dictionary
-
-    with open (Path(data_folder) / 'data.json', 'r') as f:
-        data_map = json.load(f) # Load the data map
-
-    time_list = data_map['time'] #Load the time list to convert indices to time
-
-    model.load_state_dict(torch.load(Path(model_folder_path) / f'{model_name}_{fold}.pth'))
-    inputs, targets = create_CNN_dataset(data_folder)   
-
-    return model, cloud_ds, test_indices, time_list, height_map, inputs, targets
 
 def plot_CNN_Fold_predictions(predictions, true_values, cloud_ds, test_indices, fold, model, time_list, height_map, plot_type):
     fig, ax = plt.subplots(figsize=(10, 10))  # Create a Figure and an Axes
@@ -219,15 +118,17 @@ def scatter_plot(predicted_values, true_values, model_name, plot_name):
     '''
     Plot a scatter plot of the true and predicted values.
     '''
-    plt.figure(figsize=(5, 5))
+    plt.clf()
+    plt.figure(figsize = (7,7))
     plt.scatter(predicted_values, true_values, s = 5)
     plt.xlabel('Predicted values')
     plt.ylabel('True values')
     plt.title('Predicted vs True values')
     true_min = min(np.min(true_values), np.min(predicted_values))
     true_max = max(np.max(true_values), np.max(predicted_values))
-    plt.xlim(true_min, true_max)
-    plt.ylim(true_min, true_max)
+    plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
+    plt.xlim(0, 0.6*1e-6)
+    plt.ylim(0, 0.6*1e-6)
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot{plot_name}.png'))
 
 def density_plot(predicted_values, true_values, model_name, plot_name):
@@ -240,22 +141,21 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
         (0.8, '#78d151'),
         (1, '#fde624'),
     ], N=256)
-    
+    plt.figure(figsize = (7,7))
     plt.clf()
     fig = plt.figure()
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
-    density = ax.scatter_density(predicted_values, true_values, cmap = white_viridis)
-    # density.set_clim(0, 30) 
+    density = ax.scatter_density(np.squeeze(predicted_values), np.squeeze(true_values), cmap = white_viridis)
     fig.colorbar(density, label = 'Number of points per pixel') 
-    max_value = np.max(true_values)
+    density.set_clim(0, 1000)
 
     true_min = min(np.min(true_values), np.min(predicted_values))
     true_max = max(np.max(true_values), np.max(predicted_values))
     plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
     plt.xlabel(r'Predicted Autoconversion ($kg kg^{-1} s^{-1}$)')
     plt.ylabel(r'True Autoconversion ($kg kg^{-1} s^{-1}$)')
-    plt.xlim(true_min, true_max)
-    plt.ylim(true_min, true_max)
+    plt.xlim(0, 0.6*1e-6)
+    plt.ylim(0, 0.6*1e-6)
     plt.title('Predicted vs True Autoconversion')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
@@ -275,7 +175,7 @@ def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_p
 
 def histogram_single(data, data_name, model_name, plot_name, vis_folder_path):
     plt.clf()
-    plt.hist(data, bins = 200, alpha = 0.5, label = data_name)
+    plt.hist(data, bins = 300, alpha = 0.5, label = data_name)
     plt.xlabel(data_name)
     plt.ylabel('Frequency')
     plt.title(f'{data_name}')
@@ -341,17 +241,14 @@ def main():
     model_name = 'DeepMLP'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    #best_model_MLP2hl1128hl216lr0.0007464311789884745weight_decay3.2702760119731635e-06batch_size256max_epochs300.pth
-    #best_model_MLP3hl164hl232lr0.000324132680419563weight_decay7.0845415052502345e-06batch_size256max_epochs1000.pth
-    model_file_name = 'best_model_DeepMLPlatent_dim128max_lr3e-05gamma0.7685825710759191batch_size128max_epochs50.pth'
+    model_file_name = 'best_model_DeepMLPlatent_dim226num_blocks4max_lr0.00015910657013624738gamma0.99997weight_decay0.03637880478676543batch_size32max_epochs200.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
-    denorm_log_pred = True
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
-
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
-    if denorm_log_pred:
-        predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True)
-    
+    # if denorm_log_pred:
+    #     predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True)
+    predictions = np.exp(destandardize_output(model_folder_path, model_name, predictions))
+    true_values = np.exp(destandardize_output(model_folder_path, model_name, true_values))
     density_plot(predictions, true_values, model_name, '')
     scatter_plot(predictions, true_values, model_name, '')
     # compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
