@@ -7,11 +7,13 @@ from pathlib import Path
 import os
 import json
 
+from sklearn.metrics import r2_score
+
 #Open file, initialize data arrays 
 nc_cloud_var_names = ['qc_autoconv_cloud', 'nc_autoconv_cloud','auto_cldmsink_b_cloud']
 hdf_cloud_var_names = ['qc_autoconv', 'nc_autoconv', 'auto_cldmsink_b']
 turb_var_names = ['tke_sgs']
-NC_QC_THRESHOLD = 1e-20
+NC_QC_THRESHOLD = 1e-6
 
 def remove_outliers(arr):
     """
@@ -92,7 +94,7 @@ def standardize(data, dims = None):
         std = np.std(data)
     return (data - mean) / std
 
-def destandardize(data, mean, std):
+def destandardize_single(data, mean, std):
     """
     Destandardize data using mean and standard deviation.
 
@@ -105,6 +107,16 @@ def destandardize(data, mean, std):
         np.array: Destandardized data.
     """
     return data * std + mean
+
+def destandardize_output(model_folder_path, model_name, data):
+    with open(Path(model_folder_path) / f'{model_name}_data_info.json', 'r') as f:
+        data_map = json.load(f)
+    
+    target_data = data_map['targets']
+    mean = target_data['mean']
+    std = target_data['std']
+
+    return destandardize_single(data, mean, std)
 
 def find_nonzero_threshold(dataset, threshold):
     """
@@ -355,26 +367,28 @@ def create_model_dataset(data_folder_path, model_folder_path, model_name):
 
 def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name=''):
     """
-    Save data information (mean, min, max, std) to JSON files. 
+    Save data information (mean, min, max, std) to a single JSON file. 
     Needed for rescaling model outputs to real-life interpretable values. 
 
     Args:
         inputs (np.array): Input data array.
         targets (np.array): Target data array.
-        model_folder_path (str): Path to the folder to save JSON files.
-        model_name (str): Name of the model to use in filenames.
-        dataset_name (str): Optional dataset name to include in filenames.
+        model_folder_path (str): Path to the folder to save the JSON file.
+        model_name (str): Name of the model to use in the filename.
+        dataset_name (str): Optional dataset name to include in the filename.
     """
-    input_data_map = {}
-    target_data_map = {}
+    data_info = {
+        'inputs': {},
+        'targets': {}
+    }
     
     # Process targets
     non_zero_mask = targets != 0
     masked_targets = targets[non_zero_mask]
-    target_data_map['mean'] = np.mean(targets).item()
-    target_data_map['std'] = np.std(targets).item()
-    target_data_map['min'] = np.min(masked_targets).item()
-    target_data_map['max'] = np.max(masked_targets).item()
+    data_info['targets']['mean'] = np.mean(targets).item()
+    data_info['targets']['std'] = np.std(targets).item()
+    data_info['targets']['min'] = np.min(masked_targets).item()
+    data_info['targets']['max'] = np.max(masked_targets).item()
     
     # Process inputs
     qc = inputs[:, 0]
@@ -385,29 +399,29 @@ def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name=
     masked_nc = nc[nc != 0]
     masked_tke_sgs = tke_sgs[tke_sgs != 0]
     
-    input_data_map['qc'] = {
+    data_info['inputs']['qc'] = {
         'mean': np.mean(qc).item(),
         'std': np.std(qc).item(),
         'min': np.min(masked_qc).item(),
         'max': np.max(masked_qc).item()
     }
-    input_data_map['nc'] = {
+    data_info['inputs']['nc'] = {
         'mean': np.mean(nc).item(),
         'std': np.std(nc).item(),
         'min': np.min(masked_nc).item(),
         'max': np.max(masked_nc).item()
     }
-    input_data_map['tke_sgs'] = {
+    data_info['inputs']['tke_sgs'] = {
         'mean': np.mean(tke_sgs).item(),
         'std': np.std(tke_sgs).item(),
         'min': np.min(masked_tke_sgs).item(),
         'max': np.max(masked_tke_sgs).item()
     }
 
-    # Save the target data map
-    with open(Path(model_folder_path) / f'{model_name}_{dataset_name}_target_data_map.json', 'w') as f:
-        json.dump(target_data_map, f)
+    # Save all data to a single JSON file
+    file_path = Path(model_folder_path) / f'{model_name}{dataset_name}_data_info.json'
+    with open(file_path, 'w') as f:
+        json.dump(data_info, f)
 
-    # Save the input data map
-    with open(Path(model_folder_path) / f'{model_name}_{dataset_name}_input_data_map.json', 'w') as f:
-        json.dump(input_data_map, f)
+def pred_metrics(predictions, targets):
+    

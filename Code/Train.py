@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim
 import torch.utils.data
-from torch.optim.lr_scheduler import ExponentialLR
+from torch.optim.lr_scheduler import ExponentialLR, LinearLR
 
 import numpy as np
 from pathlib import Path
@@ -112,12 +112,13 @@ def define_hyperparameter_search_space(model_name, device):
         }
     elif model_name == 'DeepMLP':
         return {
-            "latent_dim": tune.randint(64, 256),
+            "latent_dim": tune.randint(32, 256),
             "num_blocks": tune.choice([2,3,4,5]),
-            "max_lr": 3e-5,
-            "gamma": tune.uniform(0.5, 0.95),
+            "max_lr": tune.loguniform(1e-6, 3e-4),
+            "gamma": 0.99997, #decrease lr by factor of 0.75 every 10000 step
+            "weight_decay": tune.loguniform(1e-3, 0.1),
             "batch_size": 32,
-            "max_epochs": 20
+            "max_epochs": 100
         }
     else:
         return {}
@@ -150,23 +151,23 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             epoch_loss += loss.item()
         return epoch_loss / len(train_loader)
 
-    def get_set_lr(optimizer, inc = 0):
+    def get_lr(optimizer):
         for param_group in optimizer.param_groups:
-            param_group['lr'] += inc
             return param_group['lr']
 
     if model_name == 'DeepMLP' or model_name == 'GEN':
-        max_lr = get_set_lr(optimizer)
+        max_lr = get_lr(optimizer)
         total_num_steps = len(train_loader) * max_num_epochs
-        inc_lr_until = int(0.1 * total_num_steps)
+        inc_lr_until = int(0.05 * total_num_steps)
         inc_amount = max_lr/inc_lr_until
-        hold_lr_lim = int(0.6 * total_num_steps)
+        hold_lr_lim = int(0.4 * total_num_steps)
         
     num_steps = 0
-    get_set_lr(optimizer, -max_lr) #start off the lr at 0 and increase linearly
+    linear_scheduler = LinearLR(optimizer, start_factor = 1e-3, total_iters = inc_lr_until)
 
     def train_epoch_deep(epoch):
         nonlocal num_steps
+        nonlocal linear_scheduler
         model.train()
         epoch_loss = 0.0
         
@@ -174,13 +175,16 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         accum_batch_loss = 0
         num_batch = 100
         for inputs, targets in train_loader:
+            #Handle learning rate adjustments
             if num_steps <= inc_lr_until - 1:
-                lr = get_set_lr(optimizer, inc_amount)
-                wandb.log({f"Lr": lr})
-            if num_steps >= hold_lr_lim:
+                linear_scheduler.step()
+            # elif num_steps < hold_lr_lim:
+            #     pass
+            else: #decay LR
                 scheduler.step()
-                lr = get_set_lr(optimizer)
-                wandb.log({f"Lr": lr})
+            lr = get_lr(optimizer)
+            wandb.log({f"Lr": lr})
+
             inputs, targets = inputs.to(device), targets.to(device)
             optimizer.zero_grad()
             outputs = model(inputs)
@@ -189,6 +193,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
             optimizer.step()
             epoch_loss += loss.item()
             accum_batch_loss += loss.item()
+
             if (batch + 1) % num_batch == 0:
                 print(f'Epoch {epoch}: Averaged train loss over {num_batch} batches {int(batch/num_batch)}: {accum_batch_loss/num_batch}')
                 wandb.log({f"Train loss over {num_batch} batches": accum_batch_loss/num_batch})
@@ -204,15 +209,16 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
 
         batch = 0
         accum_batch_loss = 0
-        num_batch = 1
+        num_batch = 100
         with torch.no_grad():
             for inputs, targets in val_loader:
                 inputs, targets = inputs.to(device), targets.to(device)
                 outputs = model(inputs)
                 loss = criterion(outputs, targets)
                 val_epoch_loss += loss.item()
-                if batch % num_batch == 1:
-                    print(f'Epoch {epoch}: Averaged val loss over {num_batch} batches {int(batch/len(train_loader))}: {accum_batch_loss/num_batch}')
+                accum_batch_loss += loss.item()
+                if (batch + 1) % num_batch == 0:
+                    print(f'Epoch {epoch}: Averaged val loss over {num_batch} batches {int(batch/num_batch)}: {accum_batch_loss/num_batch}')
                     wandb.log({f"Val loss over {num_batch} batches": accum_batch_loss/num_batch})
                     accum_batch_loss = 0
                 batch += 1
@@ -253,17 +259,18 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         val_losses.append(avg_val_loss)
 
         print(f'Epoch {epoch} || training loss: {avg_train_loss} || validation loss: {avg_val_loss}')
-
+        wandb.log({"Train epoch loss": avg_train_loss})
+        wandb.log({"Val epoch loss": avg_val_loss})
         if avg_val_loss < min_val_loss:
             min_val_loss = avg_val_loss
             best_model = model.state_dict()
             early_stop_counter = 0
         else:
             early_stop_counter += 1
-
+        wandb.log({"Min val epoch loss": min_val_loss})
+        session.report({"mean_val_loss": min_val_loss})
         epoch += 1
 
-    print(f'Min validation loss: {min_val_loss}')
     wandb.finish()
     return min_val_loss, best_model
 
@@ -287,31 +294,23 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     val_percent = 1/9 #Since we already reserved 10 percent of data for testing 
     val_size = int(val_percent * len(dataset))
     train_size = len(dataset) - val_size
-    
+
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-    
-    train_inputs = [item[0] for item in train_dataset]
-    train_targets = [item[1] for item in train_dataset]
 
-    train_inputs = np.stack(train_inputs)
-    train_targets = np.stack(train_targets)
-
-    #Save data for undoing transforms (use train data statistics to prevent leakage)
-    save_data_info(train_inputs, train_targets, model_folder_path, model_name)
     train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size= int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
+            train_dataset, batch_size= int(config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
     
     val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size = int(config["batch_size"]), num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
+            val_dataset, batch_size = int(config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
     criterion = nn.MSELoss()
     if model_name == 'GEN' or model_name == 'DeepMLP':
-        optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"])
+        optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"], weight_decay = config["weight_decay"])
         scheduler = ExponentialLR(optimizer, gamma = config["gamma"])
     else:
         optimizer = torch.optim.AdamW(model.parameters(), lr = config["lr"], weight_decay = config["weight_decay"])
     start_epoch = 0
-    early_stop = int(config["max_epochs"]/5)
+    early_stop = int(config["max_epochs"] * 0.1)
 
     wandb.init(
       project=f"{model_name}",
@@ -329,7 +328,6 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
     }
     save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model state
-    session.report({"mean_val_loss": val_loss})
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, num_folds = 5):
     '''
@@ -380,19 +378,24 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, nu
     save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model state
     mean_val_loss = np.mean(val_losses)
-    session.report({"mean_val_loss": mean_val_loss})
 
 def configure_bias(checkpoint):
     '''
     Adds extra dimension to output bias of saved model checkpoint. Workaround.
     PyTorch copies the bias as a scalar tensor but we feed in a tensor of dim ([1]) 
     '''
+    # last_layer_bias_key = None
+    # for layer in checkpoint.keys():
+    #     if 'fc' in layer and 'bias' in layer:
+    #         last_layer_bias_key = layer
+    # checkpoint[last_layer_bias_key] = checkpoint[last_layer_bias_key].unsqueeze(0)
     last_layer_bias_key = None
-    for layer in checkpoint.keys():
-        if 'fc' in layer and 'bias' in layer:
-            last_layer_bias_key = layer
-    checkpoint[last_layer_bias_key] = checkpoint[last_layer_bias_key].unsqueeze(0)
+    for key in checkpoint.keys():
+        if 'bias' in key:
+            last_layer_bias_key = key
 
+    if last_layer_bias_key:
+        checkpoint[last_layer_bias_key] = checkpoint[last_layer_bias_key].unsqueeze(0)
     return checkpoint
 
 def test_best_config(test_dataset, model_name, model_file_name, model_folder_path):
@@ -421,7 +424,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
         inputs, targets = test_dataset[:]
         inputs, targets = inputs.to(device), targets.to(device)
         outputs = model(inputs)
-        test_loss = criterion(outputs, targets)
+        test_loss = criterion(outputs, targets.unsqueeze(1))
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
@@ -430,7 +433,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
     train_func = train_k_fold
     if single_split: 
         train_func = train_single_split
-    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    
     # model_folder_path = f'/Users/HP/Documents/GitHub/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
 
     cpus = os.cpu_count()
@@ -444,10 +447,10 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
     scheduler = ASHAScheduler(
         metric = "mean_val_loss",
         mode = "min", 
-        grace_period = 1,
-        reduction_factor = 3
+        grace_period = 2,
+        reduction_factor = 4
     )
-
+    
     tuner = tune.Tuner(
         tune.with_resources(
             tune.with_parameters(train_func, dataset=train_val_dataset,
@@ -458,7 +461,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
         param_space=config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=10,
+            num_samples=50,
             max_concurrent_trials=num_processes
         ), 
         run_config=ray.air.config.RunConfig(
@@ -486,13 +489,22 @@ def tune_model(data_folder_path, model_folder_path, model_name, single_split = F
     with open (f'{model_folder_path}/best_config_{model_name}.json', 'w') as f:
         json.dump(best_settings_map, f)
 
+def train_best_config(model_name, data_folder_path, model_folder_path):
+    with open (f'{model_folder_path}/best_config_{model_name}.json', 'r') as f:
+        best_config = json.load(f)
+    train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name)
+    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, num_workers = 16)
+    
 def main():
     data_folder_path = '../Data/NetCDFFiles'
     checkpoint_path = None
     model_name = 'DeepMLP'
     single_split = True
+    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
     
-    tune_model(data_folder_path, checkpoint_path, model_name, single_split)
+    #tune_model(data_folder_path, model_folder_path, model_name, single_split)
+    train_best_config(model_name, data_folder_path, model_folder_path)
+    
     # test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth',  map_location=torch.device('cpu'))
     # model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/LSTM/best_model_LSTMhidden_dim64num_layers2lr0.00019361424297303123weight_decay2.450336447031607e-06batch_size256max_epochs500.pth'
     # test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
