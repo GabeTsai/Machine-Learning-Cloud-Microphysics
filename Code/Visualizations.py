@@ -127,8 +127,8 @@ def scatter_plot(predicted_values, true_values, model_name, plot_name):
     true_min = min(np.min(true_values), np.min(predicted_values))
     true_max = max(np.max(true_values), np.max(predicted_values))
     plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
-    plt.xlim(0, 0.6*1e-6)
-    plt.ylim(0, 0.6*1e-6)
+    plt.xlim(true_min, true_max)
+    plt.ylim(true_min, true_max)
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}ScatterPlot{plot_name}.png'))
 
 def density_plot(predicted_values, true_values, model_name, plot_name):
@@ -147,15 +147,15 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     ax = fig.add_subplot(1,1,1, projection = 'scatter_density')
     density = ax.scatter_density(np.squeeze(predicted_values), np.squeeze(true_values), cmap = white_viridis)
     fig.colorbar(density, label = 'Number of points per pixel') 
-    density.set_clim(0, 1000)
+    density.set_clim(0, 75)
 
     true_min = min(np.min(true_values), np.min(predicted_values))
     true_max = max(np.max(true_values), np.max(predicted_values))
     plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
-    plt.xlabel(r'Predicted Autoconversion ($kg kg^{-1} s^{-1}$)')
-    plt.ylabel(r'True Autoconversion ($kg kg^{-1} s^{-1}$)')
-    plt.xlim(0, 0.6*1e-6)
-    plt.ylim(0, 0.6*1e-6)
+    plt.xlabel(fr'Predicted {plot_name} Autoconversion ($kg\,kg^{{-1}}\,s^{{-1}}$)')
+    plt.ylabel(fr'True {plot_name} Autoconversion ($kg\,kg^{{-1}}\,s^{{-1}}$)')
+    plt.xlim(-45, -20)
+    plt.ylim(-45, -20)
     plt.title('Predicted vs True Autoconversion')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
 
@@ -183,57 +183,41 @@ def histogram_single(data, data_name, model_name, plot_name, vis_folder_path):
     plt.show()
     plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
 
-def compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name, delog = True):
+def calc_eq(true_values, model_folder_path, model_name):
     '''
-    Compare ML model predictions with Khairoutdinov & Kogan, 2000 parameterized equation. 
+    Get predictions using  Khairoutdinov & Kogan, 2000 parameterized equation times enhancement factor (standard parameterization for GCMs).
     '''
-
     test_dataset = torch.load(Path(model_folder_path) / f'{model_name}_test_dataset.pth')
     inputs, targets = test_dataset[:]
-    with open(Path(model_folder_path) / f'{model_name}_input_data_map.json', 'r') as f:
+    with open(Path(model_folder_path) / f'{model_name}_data_info.json', 'r') as f:
         input_data_map = json.load(f)
-    qc_min = input_data_map['qc']['min']
-    qc_max = input_data_map['qc']['max']
-    nc_min = input_data_map['nc']['min']
-    nc_max = input_data_map['nc']['max']
-
+    input_data_map = input_data_map['inputs']
+    qc_mean = input_data_map['qc']['mean']
+    qc_std = input_data_map['qc']['std']
+    nc_mean = input_data_map['nc']['mean']
+    nc_std = input_data_map['nc']['std']
+    
     qc = np.array(inputs[:, 0])
     nc = np.array(inputs[:, 1])
 
-    qc = np.exp(min_max_denormalize(qc, qc_min, qc_max))
-    nc = np.exp(min_max_denormalize(nc, nc_min, nc_max))
-
-    eq_autoconv_rate = 13.5 * np.power(qc, 2.47) * np.power(nc, -1.1) #KK2000 equation
+    qc = np.exp(destandardize_single(qc, qc_mean, qc_std)) 
+    nc = np.exp(destandardize_single(nc, nc_mean, nc_std)) * 1e-3
     
+    histogram_single(qc, '', model_name, 'qc_test', '../Visualizations')
+    histogram_single(nc, '', model_name, 'nc_test', '../Visualizations')
+
+    eq_autoconv_rate = 30500 * np.power(qc, 3.19) * np.power(nc, -1.4) #KK2000 equation. 
     #compute inverse relative variance of qc
-    inv_v_qc = np.power(qc, 2)/np.var(qc)
+    inv_v_qc = np.power(qc, 2) / np.var(qc)
+    inv_v_qc = np.clip(inv_v_qc, 0.7, 10) #E3SM limit
 
     #multiply KK2000 Equation by enhancement factor according to Morrison & Gettelman, 2008
-    enhancement_factor = gamma(inv_v_qc + 2.47)/(gamma(inv_v_qc) * np.power(inv_v_qc, 2.47))
+    enhancement_factor = gamma(inv_v_qc + 3.19)/(gamma(inv_v_qc) * np.power(inv_v_qc, 3.19))
+
     eq_autoconv_rate = enhancement_factor * eq_autoconv_rate
-    if not delog:
-        eq_autoconv_rate = np.log(eq_autoconv_rate, out = np.zeros_like(eq_autoconv_rate, dtype=np.float64), where = (eq_autoconv_rate > 0))
-
-    mask = np.squeeze(true_values != 0)
-    masked_true_values = true_values[mask]
-    masked_predictions = predictions[mask]
-    masked_eq_autoconv_rate = eq_autoconv_rate[mask]
-
-    mean_percent_error_ML = np.mean((masked_predictions - masked_true_values)/masked_true_values)
-    mean_percent_error_eq = np.mean((masked_eq_autoconv_rate - masked_true_values)/masked_true_values)
-    criterion = nn.MSELoss()
-    
-    print(f'Mean Squared Error for ML model: {criterion(torch.FloatTensor(predictions), torch.FloatTensor(true_values))}')
-    print(f'R^2 for ML model: {r2_score(predictions, true_values)}')
-    print(f'Percent error for ML model: {mean_percent_error_ML}')
-    print(f'Mean Squared Error for KK2000 equation: {criterion(torch.FloatTensor(eq_autoconv_rate).unsqueeze(1), torch.FloatTensor(true_values))}')
-    print(f'R^2 for KK2000 equation: {r2_score(eq_autoconv_rate, true_values)}')
-    print(f'Percent error for KK2000 equation: {mean_percent_error_eq}')
-
-    # histogram(predictions, true_values, model_name, f'../Visualizations')
-    density_plot(eq_autoconv_rate, np.squeeze(true_values), model_name, 'KK2000')
-    # histogram(predictions, true_values, model_name, f'{model_name} Predictions vs True Values', f"../Visualizations")    
-    # histogram(eq_autoconv_rate, true_values, model_name, 'KK2000 vs True Values', f"../Visualizations") 
+    histogram_single(eq_autoconv_rate, '', model_name, 'eq_autoconv_rate', '../Visualizations')    
+    print(f'KK2000 metrics: {pred_metrics(eq_autoconv_rate, true_values)}')
+    return np.log(eq_autoconv_rate)
 
 def main():
     from Train import test_best_config
@@ -241,18 +225,28 @@ def main():
     model_name = 'DeepMLP'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    model_file_name = 'best_model_DeepMLPlatent_dim226num_blocks4max_lr0.00015910657013624738gamma0.99997weight_decay0.03637880478676543batch_size32max_epochs200.pth'
+    model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/DeepMLP/best_model_DeepMLP_8_29_24.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
+    
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
-    # if denorm_log_pred:
-    #     predictions, true_values = denormalize_predictions(model_folder_path, model_name, predictions, true_values, test_dataset, delog = True)
-    predictions = np.exp(destandardize_output(model_folder_path, model_name, predictions))
-    true_values = np.exp(destandardize_output(model_folder_path, model_name, true_values))
-    print(pred_metrics(true_values, predictions))
-    density_plot(predictions, true_values, model_name, '')
-    scatter_plot(predictions, true_values, model_name, '')
-    # compare_eq_vs_ml(predictions, true_values, model_folder_path, model_name)
+    
+    log_predictions = destandardize_output(model_folder_path, model_name, predictions)
+    log_true_values = destandardize_output(model_folder_path, model_name, true_values)
+    
+    # density_plot(log_predictions, log_true_values, model_name, 'Log')
+    # scatter_plot(log_predictions, log_true_values, model_name, 'Log')
+
+    predictions = np.exp(log_predictions)
+    true_values = np.exp(log_true_values)
+
+    print(f'{model_name} metrics: {pred_metrics(predictions, true_values)}')
+
+    # density_plot(predictions, true_values, model_name, '')
+    # scatter_plot(predictions, true_values, model_name, '')
+    
+    log_eq_autoconv_rate = calc_eq(true_values, model_folder_path, model_name)
+    density_plot(log_eq_autoconv_rate, log_true_values, model_name, 'KK2000Log')
 
     
 if __name__ == "__main__":

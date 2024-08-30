@@ -7,10 +7,10 @@ class Processor(nn.Module):
     def __init__(self, latent_dim, num_blocks):
         super().__init__()
         self.blocks = nn.ModuleList([
-            MLP([latent_dim, latent_dim, latent_dim, latent_dim], activation=nn.SiLU(), use_layer_norm=False, use_batch_norm=True)
+            MLP([latent_dim, latent_dim, latent_dim, latent_dim], activation=nn.ReLU(), use_layer_norm=False, use_batch_norm=True)
             for _ in range(num_blocks)
         ])
-        self.act_f = nn.SiLU()
+        self.act_f = nn.ReLU()
     def forward(self, x):
         for block in self.blocks:
             residual = x

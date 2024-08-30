@@ -33,6 +33,23 @@ def remove_outliers(arr):
     
     return (arr > lower_bound) & (arr < upper_bound)
 
+def remove_outliers_std(arr):
+    """
+    Remove values that are more than 3 standard deviations away from the mean.
+
+    Args:
+        arr (np.array): Input NumPy array to check for outliers.
+
+    Returns:
+        np.array: Mask of the same shape as `arr` where outliers are marked as False.
+    """
+    mean = np.mean(arr)
+    std = np.std(arr)
+    lower_bound = mean - 3 * std
+    upper_bound = mean + 3 * std
+    
+    return (arr > lower_bound) & (arr < upper_bound)
+    
 def min_max_normalize(data, dims=None):
     """
     Normalize data to range [0, 1], feature-specific or global. Ignore zeros.
@@ -259,7 +276,7 @@ def prepare_hdf_dataset(data_file_path):
     with h5py.File(data_file_path, 'r') as f:
         qc_autoconv = np.squeeze(f[hdf_cloud_var_names[0]])
         threshold_values = int(HDF_THRESHOLD_PERCENTAGE * qc_autoconv.shape[0] * qc_autoconv.shape[1])
-        index_list = find_nonzero_threshold(qc_autoconv, threshold_values, hdf=True)
+        index_list = find_nonzero_threshold(qc_autoconv)
         for i in range(len(hdf_cloud_var_names)):
             data_map[hdf_cloud_var_names[i]] = load_hdf_dataset(hdf_cloud_var_names[i], index_list, f)
         data_map[turb_var_names[0]] = load_hdf_dataset(turb_var_names[0], index_list, f)
@@ -311,7 +328,7 @@ def create_h5_dataset_subset(data_map, log_map, percent):
     """
     Use subset of data for faster training
     """
-    input_data, target_data = create_deep_dataset(data_map, log_map)
+    input_data, target_data = create_h5_dataset(data_map, log_map)
     p = torch.randperm(len(input_data))
 
     subset_size = int(percent * len(input_data))
@@ -339,7 +356,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
             'auto_cldmsink_b': True}
         data_file_name = '00d-03h-00m-00s-000ms.h5'
         data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
-        return create_deep_dataset_subset(data_map, log_map, percent = 1)
+        return create_h5_dataset_subset(data_map, log_map, percent = 1)
     
     model_data_loaders = {
         'MLP3': create_MLP_dataset_wrapper,
@@ -435,6 +452,7 @@ def pred_metrics(predictions, targets):
         dict: Dictionary containing various metrics.
     """
     metrics = {}
-    metrics['r2'] = r2_score(targets, predictions)
     metrics['rmse'] = np.sqrt(np.mean((predictions - targets) ** 2))
+    metrics['MAE'] = np.mean(np.abs(predictions- targets))
+    metrics['r2'] = r2_score(targets, predictions)
     return metrics 
