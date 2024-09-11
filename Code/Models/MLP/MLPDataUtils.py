@@ -74,15 +74,16 @@ def concat_data(data_maps, model_name, model_folder_path, data_name = ''):
 
     return torch.FloatTensor(standardize(train_input_data)), torch.FloatTensor(standardize(train_target_data)).unsqueeze(1)
 
-def create_MLP_dataset(data_folder_path, model_name, model_folder_path):
-
-    data_maps = prepare_datasets(data_folder_path)
+def create_MLP_dataset(data_folder_path, model_name, model_folder_path, subset):
+    data_maps = prepare_datasets(data_folder_path, subset = subset)
     inputs, targets = concat_data(data_maps, model_name, model_folder_path)
     return inputs, targets
 
 def main():
     model_name = 'MLP3'
-    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, f'../../../SavedModels/{model_name}')
+    subset = []
+    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, 
+                                        f'../../../SavedModels/{model_name}', subset)
     print(inputs.shape, targets.shape)
     print(np.mean(np.array(inputs), axis = 0))
     # histogram_single(inputs[:, 0], '', model_name, 'qc', '../../../Visualizations')

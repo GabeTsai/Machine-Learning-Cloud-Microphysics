@@ -227,18 +227,19 @@ def create_test_data_map_nc(data_file_path):
     
     return data_map
 
-def prepare_datasets(data_folder_path):
+def prepare_datasets(data_folder_path, subset = []]):
     """
-    Return a list of logged, un-normalized data maps for each NetCDF file in the data folder.
+    Return a list of raw data maps for each NetCDF file in the data folder.
 
     Args:
         data_folder_path (str): Path to the folder containing data files.
+        subset (list), default empty list: list of dataset paths if user wants specific subset of all datasets
 
     Returns:
         list: List of data maps.
     """
     data_maps = []
-    data_list = os.listdir(data_folder_path)
+    data_list = subset if len(subset) else os.listdir(data_folder_path) 
     for data_file in data_list:
         data_file_path = Path(data_folder_path) / str(data_file)
         data_map = create_data_map(data_file_path)
@@ -338,7 +339,7 @@ def create_h5_dataset_subset(data_map, log_map, percent):
 
     return input_data_subset, target_data_subset
 
-def load_data(data_folder_path, model_folder_path, model_name):
+def load_data(data_folder_path, model_folder_path, model_name, subset = []):
     '''
     Load data for specific type of model from data folder path. Used in train.py
     '''
@@ -346,7 +347,7 @@ def load_data(data_folder_path, model_folder_path, model_name):
     from Models.GEN import GENModel, Icosphere
     from Models.DeepMLP.DeepMLPModel import DeepMLP
     def create_MLP_dataset_wrapper():
-        return create_MLP_dataset(data_folder_path, model_name, model_folder_path)
+        return create_MLP_dataset(data_folder_path, model_name, model_folder_path, subset)
 
     def create_deep_dataset_wrapper():
         log_map = {

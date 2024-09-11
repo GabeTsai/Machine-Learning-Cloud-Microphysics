@@ -27,8 +27,6 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 torch.manual_seed(3407) #is all you need
 torch.cuda.manual_seed(3407)
 
-# ray.init(num_gpus = 1)
-
 def reset_weights(model):
     """
     Reset weights to avoid weight leakage.
@@ -496,10 +494,11 @@ def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_n
     train_k_fold(best_config["config"], train_val_dataset, model_name, model_folder_path, num_workers = num_workers, num_folds = 10)
 
 def main():
-    data_folder_path = '../Data/NetCDFFiles'
+    data_folder_path = '../Data'
     checkpoint_path = None
-    model_name = 'DeepMLP'
-    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}'
+    dataset = ''
+    model_type = 'DeepMLP'
+    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}{dataset}'
     
     # tune_model_arch(data_folder_path, model_folder_path, model_name, single_split = True)
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
