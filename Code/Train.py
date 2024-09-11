@@ -28,16 +28,6 @@ torch.manual_seed(3407) #is all you need
 torch.cuda.manual_seed(3407)
 
 # ray.init(num_gpus = 1)
-def decay_lr(optimizer, decay_rate):
-    """
-    Decay learning rate by decay_rate.
-
-    Args:
-        optimizer (torch.optim.Optimizer): The optimizer whose learning rate will be decayed.
-        decay_rate (float): The factor by which to decay the learning rate.
-    """
-    for param_group in optimizer.param_groups:
-        param_group['lr'] *= decay_rate
 
 def reset_weights(model):
     """
@@ -76,7 +66,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         pooling_layer = GlobalPooling()
         decoder = MLP([latent_dim, latent_dim, 1], activation = nn.SiLU(), output_bias = output_bias)
         return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
-    elif model_name == 'DeepMLP':
+    elif 'DeepMLP' in model_name:
         return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = config["num_blocks"])
     else:
         raise ValueError('Model name not recognized.')
@@ -104,15 +94,10 @@ def define_hyperparameter_search_space(model_name, mode, device):
         "batch_size": tune.choice([128,256,512,1024]),
         "max_epochs": 1000
         }
-    elif model_name == 'GEN':
-        return {
-            "latent_dim": 512,
-            "max_lr": tune.loguniform(1e-4, 3e-3),
-            "weight_decay": tune.loguniform(1e-3, 1e-1),
-            "batch_size": 64,
-            "max_epochs": 10
-        }
-    elif model_name == 'DeepMLP':
+    elif 'DeepMLP' in model_name':
+        #DeepMLP tuning has two modes: architecture and learning rate.
+        #Tune the architecture first and save the best model
+        #Then, use the best model as a starting point to tune lr related parameters.
         if mode == 'architecture':
             return {
                     "latent_dim": tune.randint(32, 256),
@@ -155,19 +140,6 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     :param start_epoch: starting epoch
     :param model_name: name of model
     '''
-
-    def train_epoch_default():
-        model.train()
-        epoch_loss = 0.0
-        for inputs, targets in train_loader:
-            inputs, targets = inputs.to(device), targets.to(device)
-            optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        return epoch_loss / len(train_loader)
 
     def get_lr(optimizer):
         for param_group in optimizer.param_groups:
@@ -245,19 +217,8 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
                 batch += 1
         return val_epoch_loss / len(val_loader)
 
-    def validate_epoch_default():
-        model.eval()
-        val_epoch_loss = 0.0
-        with torch.no_grad():
-            for inputs, targets in val_loader:
-                inputs, targets = inputs.to(device), targets.to(device)
-                outputs = model(inputs)
-                loss = criterion(outputs, targets)
-                val_epoch_loss += loss.item()
-        return val_epoch_loss / len(val_loader)
-
     # Choose the appropriate functions
-    if 'GEN' or 'DeepMLP' in model_name:
+    if 'DeepMLP' in model_name:
         train_epoch = train_epoch_deep
         validate_epoch = validate_epoch_deep
     else:
@@ -272,7 +233,6 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     early_stop_counter = 0
 
     while epoch < config["max_epochs"]:
-
         avg_train_loss = train_epoch(epoch)
         train_losses.append(avg_train_loss)
 
@@ -350,7 +310,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
         'config': config #model hyperparams
     }
     save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
-    torch.save(model_data, save_path)  # Save the best model state
+    torch.save(model_data, save_path)  # Save the best model states
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, num_folds = 10):
     '''
@@ -545,11 +505,8 @@ def main():
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
 
     # train_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
-    k_fold_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
+    # k_fold_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
     
-    # test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth',  map_location=torch.device('cpu'))
-    # model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/LSTM/best_model_LSTMhidden_dim64num_layers2lr0.00019361424297303123weight_decay2.450336447031607e-06batch_size256max_epochs500.pth'
-    # test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
     
 if __name__ == '__main__':
     main()

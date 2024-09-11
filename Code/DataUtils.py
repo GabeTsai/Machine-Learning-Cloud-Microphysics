@@ -340,7 +340,7 @@ def create_h5_dataset_subset(data_map, log_map, percent):
 
 def load_data(data_folder_path, model_folder_path, model_name):
     '''
-    Load data for specific type of model from data folder path
+    Load data for specific type of model from data folder path. Used in train.py
     '''
     from Models.MLP.MLPDataUtils import create_MLP_dataset
     from Models.GEN import GENModel, Icosphere
