@@ -191,6 +191,7 @@ def create_data_map(data_file_path, hdf=False):
     Returns:
         dict: Dictionary containing prepared data arrays.
     """
+
     cloud_ds = xr.open_dataset(data_file_path, group='DiagnosticsClouds/profiles')
     turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
 
@@ -227,7 +228,7 @@ def create_test_data_map_nc(data_file_path):
     
     return data_map
 
-def prepare_datasets(data_folder_path, subset = []]):
+def prepare_datasets(data_folder_path, subset = []):
     """
     Return a list of raw data maps for each NetCDF file in the data folder.
 
@@ -344,25 +345,14 @@ def load_data(data_folder_path, model_folder_path, model_name, subset = []):
     Load data for specific type of model from data folder path. Used in train.py
     '''
     from Models.MLP.MLPDataUtils import create_MLP_dataset
-    from Models.GEN import GENModel, Icosphere
     from Models.DeepMLP.DeepMLPModel import DeepMLP
     def create_MLP_dataset_wrapper():
         return create_MLP_dataset(data_folder_path, model_name, model_folder_path, subset)
-
-    def create_deep_dataset_wrapper():
-        log_map = {
-            'qc_autoconv': True,
-            'nc_autoconv': False,
-            'tke_sgs': True,
-            'auto_cldmsink_b': True}
-        data_file_name = '00d-03h-00m-00s-000ms.h5'
-        data_map = prepare_hdf_dataset(Path(data_folder_path) / data_file_name)
-        return create_h5_dataset_subset(data_map, log_map, percent = 1)
     
     model_data_loaders = {
         'MLP3': create_MLP_dataset_wrapper,
-        'GEN': create_deep_dataset_wrapper,
-        'DeepMLP': create_MLP_dataset_wrapper
+        'DeepMLP': create_MLP_dataset_wrapper,
+        'Ensemble': create_MLP_dataset_wrapper
     }
 
     if model_name not in model_data_loaders:

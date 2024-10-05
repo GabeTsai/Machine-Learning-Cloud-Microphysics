@@ -154,10 +154,10 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
     plt.xlabel(fr'Predicted {plot_name} Autoconversion ($kg\,kg^{{-1}}\,s^{{-1}}$)')
     plt.ylabel(fr'True {plot_name} Autoconversion ($kg\,kg^{{-1}}\,s^{{-1}}$)')
-    plt.xlim(-45, -20)
-    plt.ylim(-45, -20)
+    plt.xlim(true_min, 0.2e-7)
+    plt.ylim(true_min, 0.2e-7)
     plt.title('Predicted vs True Autoconversion')
-    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'))
+    plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'), dpi = 300)
 
 def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_path):
     '''
@@ -242,11 +242,11 @@ def main():
 
     print(f'{model_name} metrics: {pred_metrics(predictions, true_values)}')
 
-    # density_plot(predictions, true_values, model_name, '')
+    density_plot(predictions, true_values, model_name, '')
     # scatter_plot(predictions, true_values, model_name, '')
     
     log_eq_autoconv_rate = calc_eq(true_values, model_folder_path, model_name)
-    density_plot(log_eq_autoconv_rate, log_true_values, model_name, 'KK2000Log')
+    # density_plot(log_eq_autoconv_rate, log_true_values, model_name, 'GCMLog')
 
     
 if __name__ == "__main__":

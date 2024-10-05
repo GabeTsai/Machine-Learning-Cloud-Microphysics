@@ -7,8 +7,7 @@ from torch.optim.lr_scheduler import ExponentialLR, LinearLR
 import numpy as np
 from pathlib import Path
 from Models.MLP.MLPModel import *
-from Models.GEN import *
-from Models.DeepMLP.DeepMLPModel import DeepMLP
+from Models.DeepMLP.DeepMLPModel import DeepMLP, EnsembleDeepMLP
 from Models import Layers
 from DataUtils import create_model_dataset, save_data_info
 
@@ -38,7 +37,7 @@ def reset_weights(model):
         if hasattr(layer, 'reset_parameters'):
             layer.reset_parameters()
 
-def choose_model(model_name, input_dim, output_bias, config):
+def choose_model(model_name, input_dim, output_bias, config, **kwargs):
     """
     Choose model based on model name.
 
@@ -47,6 +46,7 @@ def choose_model(model_name, input_dim, output_bias, config):
         input_dim (tuple): The input dimensions.
         output_bias (bool): Whether to use output bias.
         config (dict): The configuration dictionary.
+        **kwargs: model folder
 
     Returns:
         torch.nn.Module: The chosen model.
@@ -54,16 +54,30 @@ def choose_model(model_name, input_dim, output_bias, config):
     Raises:
         ValueError: If the model name is not recognized.
     """
-    if model_name == 'MLP3':
-        return MLPBase(input_dim[0], output_bias, config["hl1"], config["hl2"])
-    elif model_name == 'GEN':
-        latent_dim = config["latent_dim"]
-        encoder = MLP([input_dim[0], latent_dim, latent_dim], activation = nn.SiLU())
-        node_mapper = MLPNodeStateMapper(latent_dim, latent_dim)
-        processor = Processor(latent_dim)
-        pooling_layer = GlobalPooling()
-        decoder = MLP([latent_dim, latent_dim, 1], activation = nn.SiLU(), output_bias = output_bias)
-        return GEN(encoder, node_mapper, processor, pooling_layer, decoder)
+    
+    if 'Ensemble' in model_name:
+        ensemble_models = nn.ModuleList()
+        model_folder_path = kwargs.get("model_folder_path", None)
+        ensemble_folder = os.path.join(model_folder_path, "EnsembleModels")
+        ensemble_configs = os.path.join(model_folder_path, "EnsembleConfigs")
+
+        for model_filename, config_file_name in zip(sorted(os.listdir(ensemble_folder)), sorted(os.listdir(ensemble_configs))):
+            full_model_config_path = os.path.join(ensemble_configs, config_file_name)
+            full_model_path = os.path.join(ensemble_folder, model_filename)
+            with open(full_model_config_path, 'r') as f:
+                model_config = json.load(f)["config"]
+            model = DeepMLP(input_dim[0], model_config["latent_dim"], 1, output_bias, num_blocks=model_config["num_blocks"])
+            
+            checkpoint = torch.load(full_model_path)
+            if "model_state_dict" in checkpoint:
+                state_dict = checkpoint["model_state_dict"]
+            else:
+                state_dict = checkpoint
+            model.load_state_dict(state_dict, strict=False)
+            
+            ensemble_models.append(model)
+
+        return EnsembleDeepMLP(ensemble_models, config["latent_dim"], 1, output_bias, num_blocks=config["num_blocks"])
     elif 'DeepMLP' in model_name:
         return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = config["num_blocks"])
     else:
@@ -92,7 +106,7 @@ def define_hyperparameter_search_space(model_name, mode, device):
         "batch_size": tune.choice([128,256,512,1024]),
         "max_epochs": 1000
         }
-    elif 'DeepMLP' in model_name':
+    elif 'DeepMLP' in model_name or 'Ensemble' in model_name:
         #DeepMLP tuning has two modes: architecture and learning rate.
         #Tune the architecture first and save the best model
         #Then, use the best model as a starting point to tune lr related parameters.
@@ -216,7 +230,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         return val_epoch_loss / len(val_loader)
 
     # Choose the appropriate functions
-    if 'DeepMLP' in model_name:
+    if 'DeepMLP' in model_name or 'Ensemble' in model_name: 
         train_epoch = train_epoch_deep
         validate_epoch = validate_epoch_deep
     else:
@@ -253,9 +267,9 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     wandb.finish()
     return min_val_loss, best_model
 
-def train_single_split(config, dataset, model_name, model_folder_path, num_workers, mode, collate_fn=None):
+def train_single_split(config, dataset, model_name, model_folder_path, dataset_name, num_workers, mode, collate_fn=None):
     '''
-    Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config.
+    Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config. 
     '''
     if 'LSTM' in model_name:
         input, target, _ = dataset[0]
@@ -266,7 +280,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
         _, targets = dataset[:]
         output_bias = torch.mean(targets)
 
-    model = choose_model(model_name, input.shape, output_bias, config).to(device)
+    model = choose_model(model_name, input.shape, output_bias, config, model_folder_path = model_folder_path).to(device)
 
     val_percent = 1/9 #Since we already reserved 10 percent of data for testing 
     val_size = int(val_percent * len(dataset))
@@ -307,7 +321,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, num_worke
         'model_state_dict': best_model, #model weights
         'config': config #model hyperparams
     }
-    save_path = Path(model_folder_path) / f'best_model_{model_name}{model_key}.pth'
+    save_path = Path(model_folder_path) / f'best_model_{model_name}_{dataset_name}_{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model states
 
 def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, num_folds = 10):
@@ -333,7 +347,7 @@ def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, nu
         val_loader = torch.utils.data.DataLoader(
             dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = num_workers, pin_memory = True)
 
-        model = choose_model(model_name, input.shape, output_bias, config).to(device)
+        model = choose_model(model_name, input.shape, output_bias, config, model_folder_path = model_folder_path).to(device)
         
         criterion = nn.MSELoss()
         optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"], weight_decay = config["weight_decay"])
@@ -400,7 +414,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
     checkpoint = model_data['model_state_dict']
     checkpoint = configure_bias(checkpoint)
-    model = choose_model(model_name, input.shape, torch.zeros(1), model_data['config']).to(device)
+    model = choose_model(model_name, input.shape, torch.zeros(1), model_data['config'], model_folder_path = model_folder_path).to(device)
     model.load_state_dict(checkpoint)
     model.eval()
 
@@ -413,7 +427,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
-def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architecture', arch_config = None, single_split = True):
+def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architecture', dataset_name = "", arch_config = None, single_split = True):
     wandb.login()
     train_func = train_k_fold
 
@@ -421,7 +435,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
         train_func = train_single_split
     
     cpus = os.cpu_count()
-    num_processes = 4
+    num_processes = 10
     num_gpus = torch.cuda.device_count()
     num_workers = 16 if cpus/num_processes > 16 else int(cpus/num_processes)
 
@@ -432,7 +446,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
         config = arch_config
 
     scheduler = ASHAScheduler(
-        metric = "mean_val_loss",
+        metric = "mean_val_loss", 
         mode = "min", 
         grace_period = 2,
         brackets = 2,
@@ -443,13 +457,14 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
         tune.with_resources(
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
+                                 dataset_name = dataset_name, 
                                  num_workers = num_workers, mode = mode),
             resources = {"cpu": num_workers, "gpu": num_gpus/num_processes},
         ),
         param_space=config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=100,
+            num_samples=50,
             max_concurrent_trials=num_processes
         ), 
         run_config=ray.air.config.RunConfig(
@@ -480,11 +495,11 @@ def tune_best_arch(model_name, data_folder_path, model_folder_path, config_name)
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name)
     tune_model(data_folder_path, model_folder_path, model_name, mode = 'lr', arch_config = best_model_arch_config, single_split = True)
     
-def train_best_config(model_name, data_folder_path, model_folder_path, config_name):
+def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         best_config = json.load(f)
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name)
-    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, num_workers = 16, mode = 'lr')
+    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, dataset_name, num_workers = 16, mode = 'lr')
 
 def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_name):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
@@ -494,16 +509,21 @@ def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_n
     train_k_fold(best_config["config"], train_val_dataset, model_name, model_folder_path, num_workers = num_workers, num_folds = 10)
 
 def main():
-    data_folder_path = '../Data'
+    data_folder_path = '../Data/all'
     checkpoint_path = None
-    dataset = ''
-    model_type = 'DeepMLP'
-    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}{dataset}'
-    
+    model_type = 'Ensemble'
+    model_folder_path = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_type}'
+    tune_model(data_folder_path, model_folder_path, model_type, single_split = True)
     # tune_model_arch(data_folder_path, model_folder_path, model_name, single_split = True)
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
-
-    # train_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
+    # dataset_name = 'ena'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'dycoms'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'atex'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'sgp'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
     # k_fold_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
     
     

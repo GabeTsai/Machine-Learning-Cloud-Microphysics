@@ -31,3 +31,21 @@ class DeepMLP(nn.Module):
         x = self.processor(x)
         x = self.decoder(x)
         return x
+    
+class EnsembleDeepMLP(nn.Module):
+    def __init__(self, models, latent_dim, output_dim, output_bias, num_blocks):
+        super().__init__()
+        torch.manual_seed(3407) #is all you need
+        self.models = models
+        self.meta_learner = DeepMLP(len(self.models), latent_dim, output_dim, output_bias, num_blocks)
+
+    def forward(self, x):
+        meta_learner_inputs = []
+
+        for i in range(len(self.models)):
+            i_out = self.models[i](x)
+            meta_learner_inputs.append(i_out)
+
+        meta_learner_inputs = torch.cat(meta_learner_inputs, dim = 1)
+
+        return self.meta_learner(meta_learner_inputs)
