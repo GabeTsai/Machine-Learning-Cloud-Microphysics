@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import mpl_scatter_density
 from matplotlib.colors import LinearSegmentedColormap
 from DataUtils import *
-from Models.MLP.MLPModel import *
+from MLPModel import *
 from scipy.special import gamma
 import xarray as xr
 from pathlib import Path
@@ -171,7 +171,7 @@ def histogram(predicted_values, true_values, model_name, plot_name, vis_folder_p
     plt.title(f'{plot_name}')
     plt.legend()
     plt.show()
-    plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
+    plt.savefig(Path(f'{vis_folder_path}/{model_name}Histogram{plot_name}.png'))
 
 def histogram_single(data, data_name, model_name, plot_name, vis_folder_path):
     plt.clf()
@@ -222,30 +222,32 @@ def calc_eq(true_values, model_folder_path, model_name):
 def main():
     from Train import test_best_config
 
-    model_name = 'DeepMLP'
+    model_name = 'Ensemble'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    model_file_name = '/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/DeepMLP/best_model_DeepMLP_8_29_24.pth'
+    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/DeepMLP/best_model_DeepMLP_8_29_24.pth'
     test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
     
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
-    
+
     log_predictions = destandardize_output(model_folder_path, model_name, predictions)
     log_true_values = destandardize_output(model_folder_path, model_name, true_values)
     
-    # density_plot(log_predictions, log_true_values, model_name, 'Log')
+    histogram(log_true_values, log_true_values, model_name, 'target', vis_folder_path)
+
+    density_plot(log_predictions, log_true_values, model_name, 'Log')
     # scatter_plot(log_predictions, log_true_values, model_name, 'Log')
 
-    predictions = np.exp(log_predictions)
-    true_values = np.exp(log_true_values)
+    # predictions = np.exp(log_predictions)
+    # true_values = np.exp(log_true_values)
 
     print(f'{model_name} metrics: {pred_metrics(predictions, true_values)}')
 
-    density_plot(predictions, true_values, model_name, '')
-    # scatter_plot(predictions, true_values, model_name, '')
+    # density_plot(predictions, true_values, model_name, '')
+    # # scatter_plot(predictions, true_values, model_name, '')
     
-    log_eq_autoconv_rate = calc_eq(true_values, model_folder_path, model_name)
+    # log_eq_autoconv_rate = calc_eq(true_values, model_folder_path, model_name)
     # density_plot(log_eq_autoconv_rate, log_true_values, model_name, 'GCMLog')
 
     

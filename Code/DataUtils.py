@@ -228,21 +228,21 @@ def create_test_data_map_nc(data_file_path):
     
     return data_map
 
-def prepare_datasets(data_folder_path, subset = []):
+def prepare_datasets(data_folder_path):
     """
     Return a list of raw data maps for each NetCDF file in the data folder.
 
     Args:
         data_folder_path (str): Path to the folder containing data files.
-        subset (list), default empty list: list of dataset paths if user wants specific subset of all datasets
+        subset (list), default empty string: name of region if user wants specific region
 
     Returns:
         list: List of data maps.
     """
     data_maps = []
-    data_list = subset if len(subset) else os.listdir(data_folder_path) 
+    data_list = os.listdir(data_folder_path) 
     for data_file in data_list:
-        data_file_path = Path(data_folder_path) / str(data_file)
+        data_file_path = Path(data_folder_path) / str(data_file) 
         data_map = create_data_map(data_file_path)
         data_maps.append(data_map)
     
@@ -338,38 +338,25 @@ def create_h5_dataset_subset(data_map, log_map, percent):
     input_data_subset = input_data[p][:subset_size]
     target_data_subset = target_data[p][:subset_size]
 
-    return input_data_subset, target_data_subset
+    return input_data_subset, target_data_subset    
 
-def load_data(data_folder_path, model_folder_path, model_name, subset = []):
-    '''
-    Load data for specific type of model from data folder path. Used in train.py
-    '''
-    from Models.MLP.MLPDataUtils import create_MLP_dataset
-    from Models.DeepMLP.DeepMLPModel import DeepMLP
-    def create_MLP_dataset_wrapper():
-        return create_MLP_dataset(data_folder_path, model_name, model_folder_path, subset)
-    
-    model_data_loaders = {
-        'MLP3': create_MLP_dataset_wrapper,
-        'DeepMLP': create_MLP_dataset_wrapper,
-        'Ensemble': create_MLP_dataset_wrapper
-    }
-
-    if model_name not in model_data_loaders:
-        raise ValueError(f"Unsupported model_name: {model_name}")
-
-    data = model_data_loaders[model_name]()
-
-    return data
-
-def create_model_dataset(data_folder_path, model_folder_path, model_name):
+def create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = ""):
     """
     Returns train/val dataset and saves test dataset as .pth file depending on model. 
+    Specify specific region name for dataset_name if you want to train on one region.
     """
-    data = load_data(data_folder_path, model_folder_path, model_name)
-
-    input_data, target_data = data
-    train_val_dataset = torch.utils.data.TensorDataset(input_data, target_data)
+    from MLPDataUtils import create_MLP_dataset, create_ensemble_dataset
+    from DeepMLPModel import DeepMLP
+    
+    train_val_dataset = None
+    if model_name == "DeepMLP":
+        print(data_folder_path)
+        print(model_folder_path)
+        train_val_dataset = create_MLP_dataset(data_folder_path, model_name, model_folder_path, dataset_name)
+    elif model_name == "Ensemble":
+        train_val_dataset = create_ensemble_dataset(data_folder_path, model_name, model_folder_path, config.REGIONS)
+    else:
+        raise ValueError(f"model_name {model_name} is invalid.")
         
     return train_val_dataset
 
@@ -427,7 +414,7 @@ def save_data_info(inputs, targets, model_folder_path, model_name, dataset_name=
     }
 
     # Save all data to a single JSON file
-    file_path = Path(model_folder_path) / f'{model_name}{dataset_name}_data_info.json'
+    file_path = Path(model_folder_path) / f'{dataset_name}_data_info.json'
     with open(file_path, 'w') as f:
         json.dump(data_info, f)
 

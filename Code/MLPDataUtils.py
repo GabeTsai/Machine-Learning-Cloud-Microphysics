@@ -4,12 +4,14 @@ import xarray as xr
 import numpy as np
 import json
 import sys
-sys.path.append('../../')
 from DataUtils import prepare_datasets, standardize, save_data_info
-
-from Visualizations import histogram, histogram_single
+from torch.utils.data import TensorDataset, ConcatDataset, DataLoader
+import os
+import config
 
 from pathlib import Path
+
+torch.serialization.add_safe_globals([TensorDataset])
 
 def prepare_dataset_MLP(data_map):
     '''
@@ -49,7 +51,7 @@ def concat_data(data_maps, model_name, model_folder_path, data_name = ''):
     input_data = np.log(input_data[filter])
     target_data = np.log(target_data[filter])
 
-    rng = np.random.default_rng(777777)
+    rng = np.random.default_rng(42069)
     indices = rng.permutation(len(input_data))
     
     input_data = input_data[indices]
@@ -63,33 +65,55 @@ def concat_data(data_maps, model_name, model_folder_path, data_name = ''):
     train_target_data = target_data[:train_size]
 
     #Save data for undoing transforms (use train data statistics to prevent leakage)
-    save_data_info(train_input_data, train_target_data, model_folder_path, model_name)
+    save_data_info(train_input_data, train_target_data, model_folder_path, model_name, data_name)
+
+    train_input_data = torch.FloatTensor(standardize(train_input_data))
+    train_target_data = torch.FloatTensor(standardize(train_target_data)).unsqueeze(1)
 
     dims = (0)
     test_input_data = standardize(input_data[train_size:])
     test_target_data = standardize(target_data[train_size:])
-    test_dataset = torch.utils.data.TensorDataset(torch.FloatTensor(test_input_data), torch.FloatTensor(test_target_data))
-    
-    torch.save(test_dataset, Path(model_folder_path)/ f'{model_name}_test_dataset.pth')
 
-    return torch.FloatTensor(standardize(train_input_data)), torch.FloatTensor(standardize(train_target_data)).unsqueeze(1)
+    train_dataset = TensorDataset(torch.FloatTensor(train_input_data), torch.FloatTensor(train_target_data))
+    test_dataset = TensorDataset(torch.FloatTensor(test_input_data), torch.FloatTensor(test_target_data))
+    
+    torch.save(test_dataset, Path(model_folder_path) / f'{model_name}_{data_name}_test_dataset.pth')
+
+    return train_dataset
 
 def create_MLP_dataset(data_folder_path, model_name, model_folder_path, subset):
-    data_maps = prepare_datasets(data_folder_path, subset = subset)
-    inputs, targets = concat_data(data_maps, model_name, model_folder_path)
-    return inputs, targets
+    data_maps = prepare_datasets(data_folder_path)
+    train_dataset = concat_data(data_maps, model_name, model_folder_path, subset)
+    return train_dataset
+
+def create_ensemble_dataset(data_folder_path, model_name, ensemble_model_name, model_folder_path, regions):
+    if model_name != "Ensemble":
+        raise ValueError("model_name not Ensemble.")
+    train_datasets = []
+    test_datasets = []
+    for region in regions:
+        train_dataset = create_MLP_dataset(data_folder_path, ensemble_model_name, model_folder_path, region)
+        train_datasets.append(train_dataset)
+        test_datasets.append(torch.load(Path(model_folder_path) \
+                            /ensemble_model_name / f'{ensemble_model_name}_{region}_test_dataset.pth', weights_only = True))
+
+    ensemble_train_dataset = ConcatDataset(train_datasets)
+    ensemble_test_dataset = ConcatDataset(test_datasets)
+
+    torch.save(ensemble_test_dataset, Path(model_folder_path) / f'{model_name}_test_dataset.pth')
+
+    return ensemble_train_dataset
 
 def main():
-    model_name = 'MLP3'
-    subset = []
-    inputs, targets = create_MLP_dataset('../../../Data/NetCDFFiles', model_name, 
-                                        f'../../../SavedModels/{model_name}', subset)
-    print(inputs.shape, targets.shape)
-    print(np.mean(np.array(inputs), axis = 0))
-    # histogram_single(inputs[:, 0], '', model_name, 'qc', '../../../Visualizations')
-    # histogram_single(inputs[:, 1], '', model_name, 'nc', '../../../Visualizations')
-    # histogram_single(inputs[:, 2], '', model_name, 'tke', '../../../Visualizations')
-    # histogram_single(targets, '', model_name, 'target', '../../../Visualizations')
-
+    ensemble_model_name = "DeepMLP"
+    model_name = "Ensemble" 
+    data_folder_path = config.DATA_FOLDER_PATH
+    model_folder_path = config.MODEL_FOLDER_PATH
+    regions = config.REGIONS
+    subset = regions[0]
+    create_MLP_dataset(data_folder_path, ensemble_model_name, model_folder_path, subset)
+    model_name = "Ensemble"
+    create_ensemble_dataset(data_folder_path, model_name, ensemble_model_name, model_folder_path, regions)
+    
 if __name__ == "__main__":
     main()
