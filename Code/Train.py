@@ -11,6 +11,7 @@ from DeepMLPModel import DeepMLP, EnsembleDeepMLP
 import Layers
 from DataUtils import create_model_dataset, save_data_info
 from Visualizations import histogram
+import config
 
 from sklearn.model_selection import KFold
 import ray
@@ -86,7 +87,8 @@ def choose_model(model_name, input_dim, output_bias, config, **kwargs):
             ensemble_models.append(model)
         
         # Return the ensemble model, ensuring it's on the correct device
-        return EnsembleDeepMLP(ensemble_models, config["latent_dim"], 1, output_bias, num_blocks=config["num_blocks"], freeze_ensemble_weights=False).to(device)
+        return EnsembleDeepMLP(ensemble_models, config["latent_dim"], 1, output_bias, num_blocks=config["num_blocks"], 
+                                activation = nn.LeakyReLU(), freeze_ensemble_weights=False).to(device)
     elif 'DeepMLP' in model_name:
         return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = config["num_blocks"], activation = nn.LeakyReLU())
     else:
@@ -121,26 +123,21 @@ def define_hyperparameter_search_space(model_name, mode, device):
         #Then, use the best model as a starting point to tune lr related parameters.
         if mode == 'architecture':
             return {
-                    "latent_dim": tune.randint(32, 256),
-                    "num_blocks": tune.choice([2,3,4,5]),
-                    "max_lr": 3e-4,
-                    "min_lr_factor": 1e-3,
-                    "inc_lr_perc": 0.05,
-                    "hold_lr_perc": 0.4,
-                    "gamma": 0.99997, #decrease lr by factor of 0.75 every 10000 step
-                    "weight_decay": 0,
-                    "batch_size": 256,
+                    "latent_dim": tune.randint(32, 512),
+                    "num_blocks": tune.choice([i for i in range(2, 8)]),
+                    "max_lr": 1e-4,
+                    "batch_size": 1024,
                     "max_epochs": 50
                     }
         elif mode == 'lr': 
             return {
                     "min_lr_factor": tune.choice([1e-12, 1]),
                     "inc_lr_perc": tune.uniform(0.01, 0.10),
-                    "max_lr": tune.loguniform(1e-4, 1e-3),
+                    "max_lr": tune.loguniform(1e-5, 1e-3),
                     "hold_lr_perc": tune.choice([i / 10 for i in range(2, 11)]),
                     "gamma": tune.uniform(0.99993, 0.99997),
                     "weight_decay": tune.loguniform(0.001, 0.01),
-                    "max_epochs": 500
+                    "max_epochs": 1000
             }
         else:
             raise ValueError('Invalid mode')
@@ -171,7 +168,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
         total_num_steps = len(train_loader) * config["max_epochs"]
         inc_lr_until = int(config["inc_lr_perc"] * total_num_steps)
         inc_amount = max_lr/inc_lr_until
-        hold_lr_lim = int(config["hold_lr_perc"] * total_num_steps)
+        hold_lr_lim = int(config["hold_lr_perc"] * total_num_steps) + inc_lr_until
         linear_scheduler = LinearLR(optimizer, start_factor = config["min_lr_factor"], total_iters = inc_lr_until)
     
     num_steps = 0
@@ -279,14 +276,9 @@ def train_single_split(config, dataset, model_name, model_folder_path, dataset_n
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config. 
     '''
-    if 'LSTM' in model_name:
-        input, target, _ = dataset[0]
-        _, targets, _ = zip(*dataset)
-        output_bias = torch.mean(torch.tensor(targets))
-    else:
-        input, target = dataset[0]
-        _, targets = dataset[:]
-        output_bias = torch.mean(targets)
+    input, target = dataset[0]
+    targets = torch.stack([dataset[i][1] for i in range(len(dataset))])
+    output_bias = torch.mean(targets)
 
     model = choose_model(model_name, input.shape, output_bias, config, model_folder_path = model_folder_path).to(device)
 
@@ -297,7 +289,6 @@ def train_single_split(config, dataset, model_name, model_folder_path, dataset_n
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
 
     val_targets = torch.stack([target for _, target in val_dataset])
-    # histogram(val_targets, val_targets, model_name, 'val target', f'../Visualizations/{model_name}')
 
     train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size= int(config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
@@ -421,7 +412,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     '''
     input, target = test_dataset[0]
     model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
-    checkpoint = model_data['model_state_dict']
+    checkpoint = configure_bias(model_data['model_state_dict'])
 
     model = choose_model(model_name, input.shape, torch.zeros(1), model_data['config'], model_folder_path = model_folder_path).to(device)
     
@@ -435,7 +426,20 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
 
     criterion = nn.MSELoss()
     with torch.no_grad():
-        inputs, targets = test_dataset[:]
+        inputs, targets = [], []
+        if model_name == "DeepMLP":
+            inputs = test_dataset.tensors[0]
+            targets = test_dataset.tensors[0]
+        elif model_name == "Ensemble":
+            for dataset in test_dataset.datasets:
+                inputs.append(test_dataset.tensors[0])
+                targets.append(test_dataset.tensors[1])
+        else:
+            raise ValueError("Model not supported.")
+        
+        # Concatenate the inputs and targets
+        inputs = torch.cat(inputs, dim=0)
+        targets = torch.cat(targets, dim=0)
         inputs, targets = inputs.to(device), targets.to(device)
         outputs = model(inputs)
         test_loss = criterion(outputs, targets.unsqueeze(1))
@@ -448,39 +452,35 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
 
     if single_split: 
         train_func = train_single_split
-    
-    cpus = os.cpu_count()
-    num_processes = 20
-    num_gpus = torch.cuda.device_count()
-    num_workers = 16 if cpus/num_processes > 16 else int(cpus/num_processes)
 
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name)
-    config = define_hyperparameter_search_space(model_name, mode, device)
+    hyperparam_config = define_hyperparameter_search_space(model_name, mode, device)
+
     if arch_config and mode == 'lr':
-        arch_config.update(config)
-        config = arch_config
+        arch_config.update(hyperparam_config)
+        hyperparam_config = arch_config
 
     scheduler = ASHAScheduler(
         metric = "mean_val_loss", 
         mode = "min", 
-        grace_period = 2,
-        brackets = 4,
-        reduction_factor = 4
+        grace_period = config.GRACE_PERIOD,
+        brackets = config.BRACKETS,
+        reduction_factor = config.REDUCTION_FACTOR
     )
-    
+
     tuner = tune.Tuner(
         tune.with_resources(
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
                                  dataset_name = dataset_name, 
-                                 num_workers = num_workers, mode = mode),
-            resources = {"cpu": num_workers, "gpu": num_gpus/num_processes},
+                                 num_workers = config.NUM_WORKERS, mode = mode),
+            resources = {"cpu": config.NUM_WORKERS, "gpu": config.NUM_GPUS/config.NUM_PROCESSES},
         ),
-        param_space=config,
+        param_space=hyperparam_config,
         tune_config=tune.TuneConfig(
             scheduler=scheduler,
-            num_samples=100,
-            max_concurrent_trials=num_processes
+            num_samples=config.NUM_SAMPLES,
+            max_concurrent_trials=config.NUM_PROCESSES
         ), 
         run_config=ray.air.config.RunConfig(
             name = "tune_model",
@@ -504,18 +504,18 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
     with open (f'{model_folder_path}/best_config_{mode}_{model_name}.json', 'w') as f:
         json.dump(best_settings_map, f)
 
-def tune_best_arch(model_name, data_folder_path, model_folder_path, dataset_name, config_name):
+def tune_best_arch(model_name, data_folder_path, model_folder_path, config_name, dataset_name):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         run_details = json.load(f)
     best_model_arch_config = run_details["config"]
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
     tune_model(data_folder_path, model_folder_path, model_name, mode = 'lr', arch_config = best_model_arch_config, single_split = True)
     
-def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name):
+def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name, mode):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         best_config = json.load(f)
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
-    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, dataset_name, num_workers = 16, mode = 'lr')
+    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, dataset_name, num_workers = 16, mode = mode)
 
 def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_name):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
@@ -527,22 +527,21 @@ def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_n
 def main():
     data_folder_path = '../Data'
     checkpoint_path = None
-    model_type = 'DeepMLP'
-    dataset_name = 'all'
+    model_type = 'Ensemble'
     model_folder_path = f'{config.MODEL_FOLDER_PATH}/{model_type}'
-    # tune_model(f"{data_folder_path}/{dataset_name}", model_folder_path, model_type, single_split = True)
-    # tune_best_arch(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, config_name = f"best_config_architecture_{model_type}")
-    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_lr_{model_type}')
+    # tune_model(data_folder_path, model_folder_path, model_type, single_split = True)
+    # tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}", dataset_name = "")
+    train_best_config(model_type, f"{data_folder_path}", model_folder_path, "", "best_config_lr_Ensemble_10_14_24", mode = 'lr')
     # tune_model_arch(data_folder_path, model_folder_path, model_name, single_split = True)
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
-    dataset_name = 'ena'
-    train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
-    dataset_name = 'dycoms'
-    train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
-    dataset_name = 'atex'
-    train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
-    dataset_name = 'sgp'
-    train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'ena'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'dycoms'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'atex'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
+    # dataset_name = 'sgp'
+    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
     # k_fold_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
     
     

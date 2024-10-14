@@ -36,7 +36,8 @@ class DeepMLP(nn.Module):
         return x
     
 class EnsembleDeepMLP(nn.Module):
-    def __init__(self, models, latent_dim, output_dim, output_bias, num_blocks, freeze_ensemble_weights = True):
+    def __init__(self, models, latent_dim, output_dim, output_bias, num_blocks, 
+                activation = nn.ReLU(), freeze_ensemble_weights = True):
         super().__init__()
         torch.manual_seed(3407) #is all you need
         self.models = models

@@ -63,6 +63,7 @@ def concat_data(data_maps, model_name, model_folder_path, data_name = ''):
 
     train_input_data = input_data[:train_size]
     train_target_data = target_data[:train_size]
+    print(train_input_data.shape)
 
     #Save data for undoing transforms (use train data statistics to prevent leakage)
     save_data_info(train_input_data, train_target_data, model_folder_path, model_name, data_name)
@@ -92,10 +93,11 @@ def create_ensemble_dataset(data_folder_path, model_name, ensemble_model_name, m
     train_datasets = []
     test_datasets = []
     for region in regions:
-        train_dataset = create_MLP_dataset(data_folder_path, ensemble_model_name, model_folder_path, region)
+        train_dataset = create_MLP_dataset(f'{data_folder_path}/{region}', ensemble_model_name, model_folder_path, region)
         train_datasets.append(train_dataset)
+        print(data_folder_path, region)
         test_datasets.append(torch.load(Path(model_folder_path) \
-                            /ensemble_model_name / f'{ensemble_model_name}_{region}_test_dataset.pth', weights_only = True))
+                            / f'{ensemble_model_name}_{region}_test_dataset.pth', weights_only = True))
 
     ensemble_train_dataset = ConcatDataset(train_datasets)
     ensemble_test_dataset = ConcatDataset(test_datasets)

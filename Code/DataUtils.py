@@ -6,6 +6,7 @@ import h5py
 from pathlib import Path
 import os
 import json
+import config
 
 from sklearn.metrics import r2_score
 
@@ -90,7 +91,7 @@ def min_max_denormalize(data, min_val, max_val):
     """
     return data * (max_val - min_val) + min_val
 
-def standardize(data, dims = None):
+def standardize(data, mean = None, std = None, dims = None):
     """
     Standardize data to have mean 0 and standard deviation 1.
 
@@ -354,7 +355,7 @@ def create_model_dataset(data_folder_path, model_folder_path, model_name, datase
         print(model_folder_path)
         train_val_dataset = create_MLP_dataset(data_folder_path, model_name, model_folder_path, dataset_name)
     elif model_name == "Ensemble":
-        train_val_dataset = create_ensemble_dataset(data_folder_path, model_name, model_folder_path, config.REGIONS)
+        train_val_dataset = create_ensemble_dataset(data_folder_path, model_name, "DeepMLP", model_folder_path, config.REGIONS)
     else:
         raise ValueError(f"model_name {model_name} is invalid.")
         

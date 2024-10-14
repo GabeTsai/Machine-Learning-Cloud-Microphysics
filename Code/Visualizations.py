@@ -19,7 +19,7 @@ def predict(model, test_dataset):
     '''
     Predict values from test TensorDataset
     '''
-    inputs, targets = test_dataset[:]
+    inputs, targets = zip(*[dataset[i] for i in range(len(dataset))])
     predictions = model(inputs).squeeze()
     true_values = targets.squeeze()
 
@@ -225,8 +225,8 @@ def main():
     model_name = 'Ensemble'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/DeepMLP/best_model_DeepMLP_8_29_24.pth'
-    test_dataset = torch.load(f'{model_folder_path}/{model_name}_test_dataset.pth')
+    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/Ensemble/ensemble_best_10_14_24.pth'
+    test_dataset = torch.load(f'{model_folder_path}/{model_name}_ena_test_dataset.pth')
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
     
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
