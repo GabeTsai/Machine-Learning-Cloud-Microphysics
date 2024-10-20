@@ -79,7 +79,7 @@ def choose_model(model_name, input_dim, output_bias, config, **kwargs):
             
             checkpoint = torch.load(full_model_path, map_location=device)
             
-            state_dict = configure_bias(checkpoint["model_state_dict"])
+            state_dict = checkpoint["model_state_dict"]
             model.load_state_dict(state_dict)
 
             model = model.to(device)
@@ -276,19 +276,14 @@ def train_single_split(config, dataset, model_name, model_folder_path, dataset_n
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config. 
     '''
-    input, target = dataset[0]
-    targets = torch.stack([dataset[i][1] for i in range(len(dataset))])
+
+    train_dataset, val_dataset = dataset[0], dataset[1]
+
+    input, target = train_dataset[0]
+    targets = torch.stack([train_dataset[i][1] for i in range(len(train_dataset))])
     output_bias = torch.mean(targets)
 
     model = choose_model(model_name, input.shape, output_bias, config, model_folder_path = model_folder_path).to(device)
-
-    val_percent = 2/9 #Since we already reserved 10 percent of data for testing 
-    val_size = int(val_percent * len(dataset))
-    train_size = len(dataset) - val_size
-
-    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
-
-    val_targets = torch.stack([target for _, target in val_dataset])
 
     train_loader = torch.utils.data.DataLoader(
             train_dataset, batch_size= int(config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
@@ -310,7 +305,7 @@ def train_single_split(config, dataset, model_name, model_folder_path, dataset_n
     early_stop = int(config["max_epochs"] * 0.1)
 
     wandb.init(
-      project=f"{model_name}{mode}",
+      project=f"{model_name}{mode}{dataset_name}",
       config = config
       )
 
@@ -429,7 +424,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
         inputs, targets = [], []
         if model_name == "DeepMLP":
             inputs = test_dataset.tensors[0]
-            targets = test_dataset.tensors[0]
+            targets = test_dataset.tensors[1]
         elif model_name == "Ensemble":
             for dataset in test_dataset.datasets:
                 inputs.append(test_dataset.tensors[0])
@@ -501,7 +496,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
         "config": best_config,
         "loss": best_metrics['mean_val_loss']
     }
-    with open (f'{model_folder_path}/best_config_{mode}_{model_name}.json', 'w') as f:
+    with open (f'{model_folder_path}/best_config_{mode}_{model_name}_{dataset_name}.json', 'w') as f:
         json.dump(best_settings_map, f)
 
 def tune_best_arch(model_name, data_folder_path, model_folder_path, config_name, dataset_name):
@@ -511,7 +506,7 @@ def tune_best_arch(model_name, data_folder_path, model_folder_path, config_name,
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
     tune_model(data_folder_path, model_folder_path, model_name, mode = 'lr', arch_config = best_model_arch_config, single_split = True)
     
-def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name, mode):
+def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name, mode = 'lr'):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         best_config = json.load(f)
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
@@ -530,10 +525,11 @@ def main():
     model_type = 'Ensemble'
     model_folder_path = f'{config.MODEL_FOLDER_PATH}/{model_type}'
     # tune_model(data_folder_path, model_folder_path, model_type, single_split = True)
-    # tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}", dataset_name = "")
-    train_best_config(model_type, f"{data_folder_path}", model_folder_path, "", "best_config_lr_Ensemble_10_14_24", mode = 'lr')
+    tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}", dataset_name = "")
+    # train_best_config(model_type, f"{data_folder_path}", model_folder_path, "", "best_config_lr_Ensemble_10_19_24", mode = 'lr')
     # tune_model_arch(data_folder_path, model_folder_path, model_name, single_split = True)
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
+
     # dataset_name = 'ena'
     # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
     # dataset_name = 'dycoms'

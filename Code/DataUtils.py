@@ -91,25 +91,35 @@ def min_max_denormalize(data, min_val, max_val):
     """
     return data * (max_val - min_val) + min_val
 
-def standardize(data, mean = None, std = None, dims = None):
+def standardize(data, mean=None, std=None, dims=None):
     """
     Standardize data to have mean 0 and standard deviation 1.
 
     Args:
         data (np.array): Data to standardize.
+        mean (np.array, optional): Array of means to use for standardization. Should match the shape of the columns if provided.
+        std (np.array, optional): Array of standard deviations to use for standardization. Should match the shape of the columns if provided.
         dims (tuple, optional): Dimensions to standardize over. If None, global mean and std used to standardize.
 
     Returns:
         np.array: Standardized data with mean 0 and standard deviation 1.
     """
 
-    if dims is not None:
-        axes = dims
-        mean = np.mean(data, axis=axes, keepdims=True)
-        std = np.std(data, axis=axes, keepdims=True)
-    else:
-        mean = np.mean(data)
-        std = np.std(data)
+    # If mean and std are not provided, calculate them based on dims
+    if mean is None and std is None:
+        if dims is not None:
+            axes = dims
+            mean = np.mean(data, axis=axes, keepdims=True)
+            std = np.std(data, axis=axes, keepdims=True)
+        else:
+            mean = np.mean(data)
+            std = np.std(data)
+    # Ensure mean and std are 1D arrays (for columns)
+    if mean.ndim > 1:
+        mean = np.squeeze(mean)
+    if std.ndim > 1:
+        std = np.squeeze(std)
+
     return (data - mean) / std
 
 def destandardize_single(data, mean, std):
@@ -192,7 +202,6 @@ def create_data_map(data_file_path, hdf=False):
     Returns:
         dict: Dictionary containing prepared data arrays.
     """
-
     cloud_ds = xr.open_dataset(data_file_path, group='DiagnosticsClouds/profiles')
     turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
 
