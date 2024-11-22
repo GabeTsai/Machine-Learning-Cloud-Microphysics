@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim
-import torch.utils.data
+from torch.utils.data import TensorDataset, ConcatDataset, DataLoader
 from torch.optim.lr_scheduler import ExponentialLR, LinearLR
 
 import numpy as np
@@ -41,7 +41,7 @@ def reset_weights(model):
         if hasattr(layer, 'reset_parameters'):
             layer.reset_parameters()
 
-def choose_model(model_name, input_dim, output_bias, config, **kwargs):
+def choose_model(model_name, input_dim, output_dim, output_bias, config, **kwargs):
     """
     Choose model based on model name.
 
@@ -87,10 +87,10 @@ def choose_model(model_name, input_dim, output_bias, config, **kwargs):
             ensemble_models.append(model)
         
         # Return the ensemble model, ensuring it's on the correct device
-        return EnsembleDeepMLP(ensemble_models, config["latent_dim"], 1, output_bias, num_blocks=config["num_blocks"], 
+        return EnsembleDeepMLP(ensemble_models, config["latent_dim"], output_dim, output_bias, num_blocks=config["num_blocks"], 
                                 activation = nn.LeakyReLU(), freeze_ensemble_weights=False).to(device)
     elif 'DeepMLP' in model_name:
-        return DeepMLP(input_dim[0], config["latent_dim"], 1, output_bias, num_blocks = config["num_blocks"], activation = nn.LeakyReLU())
+        return DeepMLP(input_dim, config["latent_dim"], output_dim, output_bias, num_blocks = config["num_blocks"], activation = nn.LeakyReLU())
     else:
         raise ValueError('Model name not recognized.')
     
@@ -124,7 +124,7 @@ def define_hyperparameter_search_space(model_name, mode, device):
         if mode == 'architecture':
             return {
                     "latent_dim": tune.randint(32, 512),
-                    "num_blocks": tune.choice([i for i in range(2, 8)]),
+                    "num_blocks": tune.choice([i for i in range(5, 16)]),
                     "max_lr": 1e-4,
                     "batch_size": 1024,
                     "max_epochs": 50
@@ -144,7 +144,8 @@ def define_hyperparameter_search_space(model_name, mode, device):
     else:
         return {}
 
-def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, start_epoch, model_name, config, scheduler = None):
+def train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, start_epoch, 
+                 model_name, hyperparam_config, scheduler = None, checkpoint_name = None):
     '''
     Train the model on a single train/test/val split until validation loss has not reached a new minimum in early_stop epochs.
 
@@ -159,17 +160,20 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     :param model_name: name of model
     '''
 
+    if checkpoint_name: 
+        model = load_checkpoint(model_name, checkpoint_name, f'{config.MODEL_FOLDER_PATH}/{model_name}')
+
     def get_lr(optimizer):
         for param_group in optimizer.param_groups:
             return param_group['lr']
-
+    
     if scheduler:
         max_lr = get_lr(optimizer)
-        total_num_steps = len(train_loader) * config["max_epochs"]
-        inc_lr_until = int(config["inc_lr_perc"] * total_num_steps)
+        total_num_steps = len(train_loader) * hyperparam_config["max_epochs"]
+        inc_lr_until = int(hyperparam_config["inc_lr_perc"] * total_num_steps)
         inc_amount = max_lr/inc_lr_until
-        hold_lr_lim = int(config["hold_lr_perc"] * total_num_steps) + inc_lr_until
-        linear_scheduler = LinearLR(optimizer, start_factor = config["min_lr_factor"], total_iters = inc_lr_until)
+        hold_lr_lim = int(hyperparam_config["hold_lr_perc"] * total_num_steps) + inc_lr_until
+        linear_scheduler = LinearLR(optimizer, start_factor = hyperparam_config["min_lr_factor"], total_iters = inc_lr_until)
     
     num_steps = 0
     
@@ -249,7 +253,7 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     epoch = start_epoch
     early_stop_counter = 0
 
-    while epoch < config["max_epochs"]:
+    while epoch < hyperparam_config["max_epochs"]:
         avg_train_loss = train_epoch(epoch)
         train_losses.append(avg_train_loss)
 
@@ -272,105 +276,110 @@ def train_single(model, criterion, optimizer, train_loader, val_loader, early_st
     wandb.finish()
     return min_val_loss, best_model
 
-def train_single_split(config, dataset, model_name, model_folder_path, dataset_name, num_workers, mode, collate_fn=None):
+def train_single_split(hyperparam_config, dataset, model_name, model_folder_path, dataset_name, num_workers, mode, checkpoint_name, collate_fn=None):
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config. 
     '''
 
     train_dataset, val_dataset = dataset[0], dataset[1]
 
-    input, target = train_dataset[0]
+    input_dim, target_dim = config.NUM_INPUTS, config.NUM_OUTPUTS
     targets = torch.stack([train_dataset[i][1] for i in range(len(train_dataset))])
     output_bias = torch.mean(targets)
 
-    model = choose_model(model_name, input.shape, output_bias, config, model_folder_path = model_folder_path).to(device)
+    model = choose_model(model_name, input_dim, target_dim, output_bias, hyperparam_config, model_folder_path = model_folder_path).to(device)
 
     train_loader = torch.utils.data.DataLoader(
-            train_dataset, batch_size= int(config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
+            train_dataset, batch_size= int(hyperparam_config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
     
     val_loader = torch.utils.data.DataLoader(
-            val_dataset, batch_size = int(config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
+            val_dataset, batch_size = int(hyperparam_config["batch_size"]), shuffle = True, num_workers = num_workers, pin_memory = True, collate_fn = collate_fn)
 
     criterion = nn.MSELoss()
     if mode == 'architecture':
-        optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"])
+        optimizer = torch.optim.AdamW(model.parameters(), lr = hyperparam_config["max_lr"])
         scheduler = None
     elif mode == 'lr':
-        optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"], weight_decay = config["weight_decay"])
-        scheduler = ExponentialLR(optimizer, gamma = config["gamma"])
+        optimizer = torch.optim.AdamW(model.parameters(), lr = hyperparam_config["max_lr"], weight_decay = hyperparam_config["weight_decay"])
+        scheduler = ExponentialLR(optimizer, gamma = hyperparam_config["gamma"])
     else:
         raise ValueError('Invalid mode')
 
     start_epoch = 0
-    early_stop = int(config["max_epochs"] * 0.1)
+    early_stop = int(hyperparam_config["max_epochs"] * 0.1)
 
     wandb.init(
       project=f"{model_name}{mode}{dataset_name}",
-      config = config
+      config = hyperparam_config
       )
 
-    wandb.log(config)
+    wandb.log(hyperparam_config)
     val_loss, best_model = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop,
-                                        start_epoch, model_name, config, scheduler = scheduler)
+                                        start_epoch, model_name, hyperparam_config, scheduler = scheduler, checkpoint_name = checkpoint_name)
 
-    model_key = ''.join(f'{key}{str(item)}' for key, item in config.items()) # Create unique file key based on model config
+    model_key = ''.join(f'{key}{str(item)}' for key, item in hyperparam_config.items()) # Create unique file key based on model config
     model_data = {
         'model_state_dict': best_model, #model weights
-        'config': config #model hyperparams
+        'config': hyperparam_config #model hyperparams
     }
     save_path = Path(model_folder_path) / f'best_model_{model_name}_{dataset_name}_{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model states
 
-def train_k_fold(config, dataset, model_name, model_folder_path, num_workers, num_folds = 10):
+def train_k_fold(hyperparam_config, dataset, model_name, model_folder_path, num_workers, num_folds = 10):
     '''
     Train model using k-fold cross validation for a particular hyperparameter configuration.
     '''
     kfold = KFold(n_splits = num_folds, shuffle = True)
-
-    input, target = dataset[0]
-    _, targets = dataset[:]
-    output_bias = torch.mean(targets)
+    
+    input_dim, target_dim = config.NUM_INPUTS, config.NUM_OUTPUTS
+    merged_dataset = ConcatDataset([dataset[0], dataset[1]])
 
     best_loss = np.inf
     best_model = None
-    for fold, (train_i, val_i) in enumerate(kfold.split(dataset)):
+    for fold, (train_i, val_i) in enumerate(kfold.split(merged_dataset)):
         print(f'Fold {fold}--------------------------------')
         train_subsampler = torch.utils.data.SubsetRandomSampler(train_i)
         val_subsampler = torch.utils.data.SubsetRandomSampler(val_i)
 
         train_loader = torch.utils.data.DataLoader(
-            dataset, batch_size= int(config["batch_size"]), sampler=train_subsampler, num_workers = num_workers, pin_memory = True)
+            merged_dataset, batch_size= int(hyperparam_config["batch_size"]), sampler=train_subsampler, num_workers = num_workers, pin_memory = True)
 
         val_loader = torch.utils.data.DataLoader(
-            dataset, batch_size = int(config["batch_size"]), sampler=val_subsampler, num_workers = num_workers, pin_memory = True)
+            merged_dataset, batch_size = int(hyperparam_config["batch_size"]), sampler=val_subsampler, num_workers = num_workers, pin_memory = True)
 
-        model = choose_model(model_name, input.shape, output_bias, config, model_folder_path = model_folder_path).to(device)
+        all_targets = []
+        for _, targets in train_loader:
+            all_targets.append(targets)
+        all_targets = torch.cat(all_targets, dim=0)
+        output_bias = torch.mean(all_targets)
+
+        model = choose_model(model_name, input_dim, target_dim, output_bias, hyperparam_config, model_folder_path = model_folder_path).to(device)
         
         criterion = nn.MSELoss()
-        optimizer = torch.optim.AdamW(model.parameters(), lr = config["max_lr"], weight_decay = config["weight_decay"])
-        scheduler = ExponentialLR(optimizer, gamma = config["gamma"])
+        optimizer = torch.optim.AdamW(model.parameters(), lr = hyperparam_config["max_lr"], weight_decay = hyperparam_config["weight_decay"])
+        scheduler = ExponentialLR(optimizer, gamma = hyperparam_config["gamma"])
 
         start_epoch = 0
-        early_stop = int(config["max_epochs"] * 0.1)
+        early_stop = int(hyperparam_config["max_epochs"] * 0.1)
 
         wandb.init(
         project=f"{model_name}",
-        config = config
+        config = hyperparam_config
         )
 
-        wandb.log(config)
+        wandb.log(hyperparam_config)
         wandb.log({"fold": fold})
 
         val_loss, best_model_fold = train_single(model, criterion, optimizer, train_loader, val_loader, early_stop, 
-                                                start_epoch, model_name, config, scheduler = scheduler)
+                                                start_epoch, model_name, hyperparam_config, scheduler = scheduler)
         if val_loss < best_loss:
             best_loss = val_loss
             best_model = best_model_fold  # Update best model
 
-    model_key = ''.join(f'{key}{str(item)}' for key, item in config.items()) # Create unique file key based on model config
+    model_key = ''.join(f'{key}{str(item)}' for key, item in hyperparam_config.items()) # Create unique file key based on model config
     model_data = {
         'model_state_dict': best_model, #model weights
-        'config': config #model hyperparams
+        'config': hyperparam_config #model hyperparams
     }
     save_path = Path(model_folder_path) / f'best_model_k_fold_{model_name}{model_key}.pth'
     torch.save(model_data, save_path)  # Save the best model state
@@ -388,9 +397,24 @@ def configure_bias(checkpoint):
             last_layer_bias_key = key
     
     if last_layer_bias_key:
-        checkpoint[last_layer_bias_key] = checkpoint[last_layer_bias_key].unsqueeze(0)
+        checkpoint[last_layer_bias_key] = checkpoint[last_layer_bias_key]
 
     return checkpoint
+
+def load_checkpoint(model_name, model_file_name, model_folder_path):
+    input_dim, target_dim = config.NUM_INPUTS, config.NUM_OUTPUTS
+    model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
+    checkpoint = model_data['model_state_dict']
+
+    model = choose_model(model_name, input_dim, target_dim, torch.zeros(1), model_data['config'], model_folder_path = model_folder_path).to(device)
+
+    if model_name == "Ensemble":
+        meta_learner_checkpoint = {key: value for key, value in checkpoint.items() if "meta_learner" in key}
+        model.load_state_dict(meta_learner_checkpoint, strict = False)
+    else:
+        model.load_state_dict(checkpoint)
+    
+    return model
 
 def test_best_config(test_dataset, model_name, model_file_name, model_folder_path):
     '''
@@ -399,45 +423,25 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     This function loads a pre-trained model from a specified file, configures it,
     and evaluates its performance on the provided test dataset using Mean Squared Error (MSE) loss.
 
-    :param test_dataset: A dataset object that provides test data. It should return tuples of (input, target).
     :param model_name: The name of the model architecture to use. This should match one of the options in `choose_model`.
     :param model_file_name: The filename of the pre-trained model checkpoint to load.
     :param model_folder_path: The directory path where the model checkpoint file is located.
     :return: A tuple containing the test loss, the model outputs, and the target values.
     '''
-    input, target = test_dataset[0]
-    model_data = torch.load(Path(model_folder_path) / f'{model_file_name}',  map_location=torch.device('cpu'))
-    checkpoint = configure_bias(model_data['model_state_dict'])
-
-    model = choose_model(model_name, input.shape, torch.zeros(1), model_data['config'], model_folder_path = model_folder_path).to(device)
-    
-    if model_name == "Ensemble":
-        meta_learner_checkpoint = {key: value for key, value in checkpoint.items() if "meta_learner" in key}
-        model.load_state_dict(meta_learner_checkpoint, strict = False)
-    else:
-        model.load_state_dict(checkpoint)
+    model = load_checkpoint(model_name, model_file_name, model_folder_path)
         
     model.eval()
 
     criterion = nn.MSELoss()
     with torch.no_grad():
         inputs, targets = [], []
-        if model_name == "DeepMLP":
-            inputs = test_dataset.tensors[0]
-            targets = test_dataset.tensors[1]
-        elif model_name == "Ensemble":
-            for dataset in test_dataset.datasets:
-                inputs.append(test_dataset.tensors[0])
-                targets.append(test_dataset.tensors[1])
-        else:
-            raise ValueError("Model not supported.")
-        
+        inputs = test_dataset.tensors[0]
+        targets = test_dataset.tensors[1]
+
         # Concatenate the inputs and targets
-        inputs = torch.cat(inputs, dim=0)
-        targets = torch.cat(targets, dim=0)
         inputs, targets = inputs.to(device), targets.to(device)
         outputs = model(inputs)
-        test_loss = criterion(outputs, targets.unsqueeze(1))
+        test_loss = criterion(outputs, targets)
     print(f'Test loss: {test_loss}')
     return test_loss, outputs, targets
 
@@ -506,13 +510,14 @@ def tune_best_arch(model_name, data_folder_path, model_folder_path, config_name,
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
     tune_model(data_folder_path, model_folder_path, model_name, mode = 'lr', arch_config = best_model_arch_config, single_split = True)
     
-def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name, mode = 'lr'):
+def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name, checkpoint_name = None, mode = 'lr'):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         best_config = json.load(f)
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
-    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, dataset_name, num_workers = 16, mode = mode)
+    train_single_split(best_config["config"], train_val_dataset, model_name, model_folder_path, 
+                    dataset_name, num_workers = config.NUM_WORKERS, mode = mode, checkpoint_name = checkpoint_name)
 
-def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_name):
+def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_name, dataset_name):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         best_config = json.load(f)
     train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
@@ -520,16 +525,17 @@ def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_n
     train_k_fold(best_config["config"], train_val_dataset, model_name, model_folder_path, num_workers = num_workers, num_folds = 10)
 
 def main():
-    data_folder_path = '../Data'
+    data_name = 'ena' 
+    data_folder_path = f'../Data/{data_name}'
     checkpoint_path = None
-    model_type = 'Ensemble'
+    model_type = 'DeepMLP'
     model_folder_path = f'{config.MODEL_FOLDER_PATH}/{model_type}'
-    # tune_model(data_folder_path, model_folder_path, model_type, single_split = True)
-    tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}", dataset_name = "")
-    # train_best_config(model_type, f"{data_folder_path}", model_folder_path, "", "best_config_lr_Ensemble_10_19_24", mode = 'lr')
+    # tune_model(data_folder_path, model_folder_path, model_type, dataset_name = "all", single_split = True)
+    # tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}_{data_name}", dataset_name = "")
+    train_best_config(model_type, f"{data_folder_path}", model_folder_path, data_name, config.BEST_MODEL_CONFIG_NAME, mode = 'lr') 
     # tune_model_arch(data_folder_path, model_folder_path, model_name, single_split = True)
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
-
+    # k_fold_best_config(model_type, data_folder_path, model_folder_path, config_name = 'best_config_lr_DeepMLP_11_1_24_kfold', dataset_name = "")
     # dataset_name = 'ena'
     # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
     # dataset_name = 'dycoms'

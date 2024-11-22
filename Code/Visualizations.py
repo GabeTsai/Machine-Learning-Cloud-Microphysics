@@ -154,8 +154,8 @@ def density_plot(predicted_values, true_values, model_name, plot_name):
     plt.plot([true_min, true_max], [true_min, true_max], linestyle='dashed', color='black')
     plt.xlabel(fr'Predicted {plot_name} Autoconversion ($kg\,kg^{{-1}}\,s^{{-1}}$)')
     plt.ylabel(fr'True {plot_name} Autoconversion ($kg\,kg^{{-1}}\,s^{{-1}}$)')
-    plt.xlim(true_min, 0.2e-7)
-    plt.ylim(true_min, 0.2e-7)
+    # plt.xlim(true_min, true_max)
+    # plt.ylim(true_min,true_max)
     plt.title('Predicted vs True Autoconversion')
     plt.savefig(Path(f'../Visualizations/{model_name}/{model_name}DensityPlot{plot_name}.png'), dpi = 300)
 
@@ -183,11 +183,10 @@ def histogram_single(data, data_name, model_name, plot_name, vis_folder_path):
     plt.show()
     plt.savefig(Path(f'{vis_folder_path}/{model_name}/{model_name}Histogram{plot_name}.png'))
 
-def calc_eq(true_values, model_folder_path, model_name):
+def calc_eq(true_values, model_folder_path, model_name, test_dataset):
     '''
     Get predictions using  Khairoutdinov & Kogan, 2000 parameterized equation times enhancement factor (standard parameterization for GCMs).
     '''
-    test_dataset = torch.load(Path(model_folder_path) / f'{model_name}_test_dataset.pth')
     inputs, targets = test_dataset[:]
     with open(Path(model_folder_path) / f'{model_name}_data_info.json', 'r') as f:
         input_data_map = json.load(f)
@@ -222,11 +221,11 @@ def calc_eq(true_values, model_folder_path, model_name):
 def main():
     from Train import test_best_config
 
-    model_name = 'Ensemble'
+    model_name = 'DeepMLP'
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/Ensemble/ensemble_best_10_14_24.pth'
-    test_dataset = torch.load(f'{model_folder_path}/{model_name}_ena_test_dataset.pth')
+    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}/best_model_{model_name}_sgp_11_18_24.pth'
+    test_dataset = torch.load(f'{model_folder_path}/{model_name}_sgp_test_dataset.pth')
     test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
     
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
@@ -234,20 +233,18 @@ def main():
     log_predictions = destandardize_output(model_folder_path, model_name, predictions)
     log_true_values = destandardize_output(model_folder_path, model_name, true_values)
     
-    histogram(log_true_values, log_true_values, model_name, 'target', vis_folder_path)
-
-    density_plot(log_predictions, log_true_values, model_name, 'Log')
+    density_plot(log_predictions, log_true_values, model_name, 'sgpLog')
     # scatter_plot(log_predictions, log_true_values, model_name, 'Log')
 
-    # predictions = np.exp(log_predictions)
-    # true_values = np.exp(log_true_values)
+    predictions = np.exp(log_predictions)
+    true_values = np.exp(log_true_values)
 
     print(f'{model_name} metrics: {pred_metrics(predictions, true_values)}')
 
     # density_plot(predictions, true_values, model_name, '')
     # # scatter_plot(predictions, true_values, model_name, '')
     
-    # log_eq_autoconv_rate = calc_eq(true_values, model_folder_path, model_name)
+    # log_eq_autoconv_rate = calc_eq(true_values, model_folder_path, model_name, test_dataset)
     # density_plot(log_eq_autoconv_rate, log_true_values, model_name, 'GCMLog')
 
     
