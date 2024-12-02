@@ -123,8 +123,8 @@ def define_hyperparameter_search_space(model_name, mode, device):
         #Then, use the best model as a starting point to tune lr related parameters.
         if mode == 'architecture':
             return {
-                    "latent_dim": tune.randint(32, 512),
-                    "num_blocks": tune.choice([i for i in range(5, 16)]),
+                    "latent_dim": tune.randint(32, 256),
+                    "num_blocks": tune.choice([i for i in range(3, 16)]),
                     "max_lr": 1e-4,
                     "batch_size": 1024,
                     "max_epochs": 50
@@ -137,7 +137,7 @@ def define_hyperparameter_search_space(model_name, mode, device):
                     "hold_lr_perc": tune.choice([i / 10 for i in range(2, 11)]),
                     "gamma": tune.uniform(0.99993, 0.99997),
                     "weight_decay": tune.loguniform(0.001, 0.01),
-                    "max_epochs": 1000
+                    "max_epochs": 100
             }
         else:
             raise ValueError('Invalid mode')
@@ -280,9 +280,26 @@ def train_single_split(hyperparam_config, dataset, model_name, model_folder_path
     '''
     Train on a single train-valid split (provided dataset is big enough) for a particular hyperparameter config. 
     '''
-
     train_dataset, val_dataset = dataset[0], dataset[1]
+    if dataset_name != 'all':
+        region_id = config.REGION_TAG_MAP[dataset_name]
+        
+        # Filter training dataset
+        train_regions = train_dataset.tensors[2]
+        train_mask = (train_regions == region_id)
+        train_inputs = train_dataset.tensors[0][train_mask]
+        train_targets = train_dataset.tensors[1][train_mask]
+        print(train_inputs.shape)
+        train_dataset = TensorDataset(train_inputs, train_targets)  # Create new dataset
 
+        # Filter validation dataset
+        val_regions = val_dataset.tensors[2]
+        val_mask = (val_regions == region_id)
+        val_inputs = val_dataset.tensors[0][val_mask]
+        val_targets = val_dataset.tensors[1][val_mask]
+        print(val_inputs.shape)
+        val_dataset = TensorDataset(val_inputs, val_targets)  # Create new dataset
+    
     input_dim, target_dim = config.NUM_INPUTS, config.NUM_OUTPUTS
     targets = torch.stack([train_dataset[i][1] for i in range(len(train_dataset))])
     output_bias = torch.mean(targets)
@@ -416,7 +433,7 @@ def load_checkpoint(model_name, model_file_name, model_folder_path):
     
     return model
 
-def test_best_config(test_dataset, model_name, model_file_name, model_folder_path):
+def test_best_config(test_dataset, model_name, model_file_name, model_folder_path, region = None):
     '''
     Test the best model configuration on a given test dataset and compute the loss.
 
@@ -426,6 +443,7 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     :param model_name: The name of the model architecture to use. This should match one of the options in `choose_model`.
     :param model_file_name: The filename of the pre-trained model checkpoint to load.
     :param model_folder_path: The directory path where the model checkpoint file is located.
+    :param region (str, optional): Specify if you want inference on a particular region
     :return: A tuple containing the test loss, the model outputs, and the target values.
     '''
     model = load_checkpoint(model_name, model_file_name, model_folder_path)
@@ -435,8 +453,17 @@ def test_best_config(test_dataset, model_name, model_file_name, model_folder_pat
     criterion = nn.MSELoss()
     with torch.no_grad():
         inputs, targets = [], []
+        
         inputs = test_dataset.tensors[0]
         targets = test_dataset.tensors[1]
+        if region:
+            regions = test_dataset.tensors[2]
+            region_id = config.REGION_TAG_MAP[region]
+            mask = (regions == region_id)
+            
+            inputs = inputs[mask]
+            targets = targets[mask]
+            
 
         # Concatenate the inputs and targets
         inputs, targets = inputs.to(device), targets.to(device)
@@ -452,7 +479,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
     if single_split: 
         train_func = train_single_split
 
-    train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name)
+    train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
     hyperparam_config = define_hyperparameter_search_space(model_name, mode, device)
 
     if arch_config and mode == 'lr':
@@ -472,7 +499,7 @@ def tune_model(data_folder_path, model_folder_path, model_name, mode = 'architec
             tune.with_parameters(train_func, dataset=train_val_dataset,
                                  model_name=model_name, model_folder_path=model_folder_path, 
                                  dataset_name = dataset_name, 
-                                 num_workers = config.NUM_WORKERS, mode = mode),
+                                 num_workers = config.NUM_WORKERS, mode = mode, checkpoint_name = None),
             resources = {"cpu": config.NUM_WORKERS, "gpu": config.NUM_GPUS/config.NUM_PROCESSES},
         ),
         param_space=hyperparam_config,
@@ -507,8 +534,7 @@ def tune_best_arch(model_name, data_folder_path, model_folder_path, config_name,
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
         run_details = json.load(f)
     best_model_arch_config = run_details["config"]
-    train_val_dataset = create_model_dataset(data_folder_path, model_folder_path, model_name, dataset_name = dataset_name)
-    tune_model(data_folder_path, model_folder_path, model_name, mode = 'lr', arch_config = best_model_arch_config, single_split = True)
+    tune_model(data_folder_path, model_folder_path, model_name, mode = 'lr', dataset_name = dataset_name, arch_config = best_model_arch_config, single_split = True)
     
 def train_best_config(model_name, data_folder_path, model_folder_path, dataset_name, config_name, checkpoint_name = None, mode = 'lr'):
     with open (f'{model_folder_path}/{config_name}.json', 'r') as f:
@@ -525,24 +551,19 @@ def k_fold_best_config(model_name, data_folder_path, model_folder_path, config_n
     train_k_fold(best_config["config"], train_val_dataset, model_name, model_folder_path, num_workers = num_workers, num_folds = 10)
 
 def main():
-    data_name = 'ena' 
+    data_name = 'all'
     data_folder_path = f'../Data/{data_name}'
     checkpoint_path = None
     model_type = 'DeepMLP'
     model_folder_path = f'{config.MODEL_FOLDER_PATH}/{model_type}'
-    # tune_model(data_folder_path, model_folder_path, model_type, dataset_name = "all", single_split = True)
-    # tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}_{data_name}", dataset_name = "")
-    train_best_config(model_type, f"{data_folder_path}", model_folder_path, data_name, config.BEST_MODEL_CONFIG_NAME, mode = 'lr') 
+    # tune_model(config.DATA_FOLDER_PATH, model_folder_path, model_type, dataset_name = data_handle, single_split = True)
+    # tune_best_arch(model_type, f"{data_folder_path}", model_folder_path, config_name = f"best_config_architecture_{model_type}_{data_handle}", dataset_name = data_handle)
+    # train_best_config(model_type, data_folder_path, model_folder_path, data_name, config.BEST_MODEL_CONFIG_NAME, mode = 'lr') 
     # tune_model_arch(data_folder_path, model_folder_path, model_name, single_split = True)
     # tune_best_arch(model_name, data_folder_path, model_folder_path, 'best_config_8_28_24_b')
     # k_fold_best_config(model_type, data_folder_path, model_folder_path, config_name = 'best_config_lr_DeepMLP_11_1_24_kfold', dataset_name = "")
-    # dataset_name = 'ena'
-    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
-    # dataset_name = 'dycoms'
-    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
-    # dataset_name = 'atex'
-    # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
-    # dataset_name = 'sgp'
+    for region in config.REGIONS:
+        train_best_config(model_type, f"{data_folder_path}", model_folder_path, region, config.BEST_MODEL_CONFIG_NAME, mode = 'lr')
     # train_best_config(model_type, f"{data_folder_path}/{dataset_name}", model_folder_path, dataset_name, f'best_config_{dataset_name}')
     # k_fold_best_config(model_name, data_folder_path, model_folder_path, 'best_config_lr_8_29_24')
     

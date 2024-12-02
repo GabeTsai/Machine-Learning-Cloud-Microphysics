@@ -202,6 +202,18 @@ def create_data_map(data_file_path, hdf=False):
     Returns:
         dict: Dictionary containing prepared data arrays.
     """
+    data_file_path = str(data_file_path)
+    region = ''
+    if 'atex' in data_file_path:
+        region = config.REGION_TAG_MAP['atex']
+    elif 'dycoms' in data_file_path:
+        region = config.REGION_TAG_MAP['dycoms']
+    elif 'ena' in data_file_path:
+        region = config.REGION_TAG_MAP['ena']
+    elif 'sgp' in data_file_path:
+        region = config.REGION_TAG_MAP['sgp']
+    else:
+        raise ValueError(f"Could not find valid region in path {data_file_path}")
     cloud_ds = xr.open_dataset(data_file_path, group='DiagnosticsClouds/profiles')
     turb_ds = xr.open_dataset(data_file_path, group='DiagnosticState/profiles')
 
@@ -213,6 +225,7 @@ def create_data_map(data_file_path, hdf=False):
     for i in range(len(turb_var_names)):
         data = np.array(turb_ds[turb_var_names[i]]).flatten()
         data_map[turb_var_names[i]] = data[mask]
+    data_map["region"] = region
     return data_map
 
 def filter_data(qc):
@@ -251,6 +264,7 @@ def prepare_datasets(data_folder_path):
     """
     data_maps = []
     data_list = os.listdir(data_folder_path) 
+    
     for data_file in data_list:
         data_file_path = Path(data_folder_path) / str(data_file) 
         data_map = create_data_map(data_file_path)
@@ -355,14 +369,17 @@ def create_model_dataset(data_folder_path, model_folder_path, model_name, datase
     Returns train/val dataset and saves test dataset as .pth file depending on model. 
     Specify specific region name for dataset_name if you want to train on one region.
     """
-    from MLPDataUtils import create_MLP_dataset, create_ensemble_dataset
+    from MLPDataUtils import create_MLP_dataset, create_ensemble_dataset, create_MLP_dataset_split
     from DeepMLPModel import DeepMLP
     
     train_val_dataset = None
     if model_name == "DeepMLP":
         print(data_folder_path)
         print(model_folder_path)
-        train_val_dataset = create_MLP_dataset(data_folder_path, model_name, model_folder_path, dataset_name)
+        if dataset_name == "split":
+            train_val_dataset = create_MLP_dataset_split(data_folder_path, model_name, model_folder_path, config.REGIONS, standardize = True)
+        else:
+            train_val_dataset = create_MLP_dataset(data_folder_path, model_name, model_folder_path, dataset_name)
     elif model_name == "Ensemble":
         train_val_dataset = create_ensemble_dataset(data_folder_path, model_name, "DeepMLP", model_folder_path, config.REGIONS)
     else:
@@ -440,6 +457,7 @@ def pred_metrics(predictions, targets):
         dict: Dictionary containing various metrics.
     """
     metrics = {}
+    
     metrics['rmse'] = np.sqrt(np.mean((predictions - targets) ** 2))
     metrics['MAE'] = np.mean(np.abs(predictions- targets))
     metrics['r2'] = r2_score(targets, predictions)

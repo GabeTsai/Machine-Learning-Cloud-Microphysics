@@ -222,24 +222,25 @@ def main():
     from Train import test_best_config
 
     model_name = 'DeepMLP'
+    region_name = None
     model_folder_path = f'../SavedModels/{model_name}'
     vis_folder_path = f'../Visualizations/{model_name}'
-    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}/best_model_{model_name}_sgp_11_18_24.pth'
-    test_dataset = torch.load(f'{model_folder_path}/{model_name}_sgp_test_dataset.pth')
-    test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path)
+    model_file_name = f'/home/groups/yzwang/gabriel_files/Machine-Learning-Cloud-Microphysics/SavedModels/{model_name}/best_model_{model_name}_11_3_24.pth'
+    test_dataset = torch.load(f'{model_folder_path}/{model_name}_all_test_dataset.pth')
+    test_loss, predictions, true_values = test_best_config(test_dataset, model_name, model_file_name, model_folder_path, region = region_name)
     
     predictions, true_values = predictions.cpu().numpy(), true_values.cpu().numpy() 
 
     log_predictions = destandardize_output(model_folder_path, model_name, predictions)
     log_true_values = destandardize_output(model_folder_path, model_name, true_values)
     
-    density_plot(log_predictions, log_true_values, model_name, 'sgpLog')
+    density_plot(log_predictions, log_true_values, model_name, f'{region_name}Log')
     # scatter_plot(log_predictions, log_true_values, model_name, 'Log')
 
     predictions = np.exp(log_predictions)
     true_values = np.exp(log_true_values)
 
-    print(f'{model_name} metrics: {pred_metrics(predictions, true_values)}')
+    print(f'{model_name} metrics: {pred_metrics(log_predictions, log_true_values)}')
 
     # density_plot(predictions, true_values, model_name, '')
     # # scatter_plot(predictions, true_values, model_name, '')
